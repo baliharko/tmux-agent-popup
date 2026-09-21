@@ -135,6 +135,17 @@ client_pane_is() { [ "$(t display-message -p -c "$(t list-clients -F '#{client_n
 # The highest tick-N on screen: livebot's counter, as the preview shows it.
 max_tick() { snap && grep -oE 'tick-[0-9]+' "$TMP/snap" | sed 's/tick-//' | sort -n | tail -n 1; }
 ticks_past() { [ "$(max_tick)" -gt "$1" ]; }
+# preview_keeps_up: five times in a row, the preview moves on within a quarter
+# of a second. A once-a-second preview rarely manages that.
+preview_keeps_up() {
+  local before after
+  for _ in 1 2 3 4 5; do
+    before="$(max_tick)"
+    sleep 0.25
+    after="$(max_tick)"
+    [ "${after:-0}" -gt "${before:-0}" ] || return 1
+  done
+}
 # fzf_at_least <major> <minor>, as in pick-session.
 fzf_at_least() {
   local v
@@ -320,15 +331,16 @@ else
 
   echo "live updates"
   # A stand-in agent that works for three seconds, then clears its screen and
-  # idles, counting all along. exec -a names the process like an agent.
+  # idles, counting ten times a second all along. exec -a names the process
+  # like an agent.
   cat >"$TMP/livebot" <<'EOF'
 #!/bin/sh
 i=0
 while :; do
   i=$((i + 1))
-  [ "$i" -eq 7 ] && printf '\033[2J\033[H'
-  if [ "$i" -le 6 ]; then echo "tick-$i (esc to interrupt)"; else echo "tick-$i"; fi
-  sleep 0.5
+  [ "$i" -eq 31 ] && printf '\033[2J\033[H'
+  if [ "$i" -le 30 ]; then echo "tick-$i (esc to interrupt)"; else echo "tick-$i"; fi
+  sleep 0.1
 done
 EOF
   t new-window -d -t main:3 -c "$PROJ" "bash -c 'exec -a copilot sh \"\$0\"' '$TMP/livebot'"
@@ -339,6 +351,7 @@ EOF
   first_tick="$(max_tick)"
   check 'the preview follows the agent live' ticks_past "${first_tick:-0}"
   if fzf_has_timer; then
+    check '... several times a second' preview_keeps_up
     check 'the loading spinner only shows during a refresh' mostly_idle_spinner
   fi
   press '\x1b'

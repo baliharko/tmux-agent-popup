@@ -60,7 +60,9 @@ also hides the popup.
 
 `prefix u` lists every running agent with a live preview of its screen: the
 plugin's own sessions, and agents you started yourself in an ordinary pane.
-The list and preview update every second while the picker is open.
+The preview redraws ten times a second, so you can watch an agent work; the
+list (and who's working) updates every second. On fzf versions without a
+timer (before `every()` was added), both update once a second.
 
 ```
 ● idle     Claude Code  api                  open       ~/dev/api

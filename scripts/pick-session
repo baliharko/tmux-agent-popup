@@ -15,6 +15,19 @@
 # its own, pid the agent's process. AGENT_POPUP_CLIENT, set by
 # choose-session, is the client the popup is shown on.
 set -u
+
+# The preview is redrawn ten times a second, so it's handled first, without
+# loading the helpers. Dropping the blank lines below the agent's output
+# makes fzf's follow show the end of it (the input box), not empty space.
+if [ "${1:-}" = --preview ]; then
+  if [ "$2" = session ]; then target="=$3:"; else target="$3"; fi
+  tmux capture-pane -ept "$target" | awk '
+    { plain = $0; gsub(/\033\[[0-9;]*m/, "", plain) }
+    plain ~ /^[[:space:]]*$/ { blank = blank $0 "\n"; next }
+    { printf "%s%s\n", blank, $0; blank = "" }'
+  exit 0
+fi
+
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
 . "$DIR/helpers.sh"
@@ -144,15 +157,6 @@ case "${1:-}" in
   list_rows
   exit 0
   ;;
---preview)
-  # Without the blank lines below the agent's output, fzf's follow shows the
-  # end of it (the input box) rather than empty space.
-  tmux capture-pane -ept "$(target_of "$2" "$3")" | awk '
-    { plain = $0; gsub(/\033\[[0-9;]*m/, "", plain) }
-    plain ~ /^[[:space:]]*$/ { blank = blank $0 "\n"; next }
-    { printf "%s%s\n", blank, $0; blank = "" }'
-  exit 0
-  ;;
 --esc)
   # From search back to nav; from nav, close the picker.
   if [ "${FZF_PROMPT:-}" = "$SEARCH_PROMPT" ]; then printf '%s' "$TO_NAV"; else printf abort; fi
@@ -180,13 +184,15 @@ opts=(--ansi --no-sort --reverse --cycle --delimiter $'\t' --with-nth 4
   --preview '"$AGENT_POPUP_PICKER" --preview {1} {2}'
   --preview-window 'up,70%,follow'
   --bind 'ctrl-x:execute-silent("$AGENT_POPUP_PICKER" --kill {1} {2} {3})+reload("$AGENT_POPUP_PICKER" --list)')
-# Live: reload the list and redraw the preview every second, so statuses and
-# screens stay current. Without fzf's timer, each finished load starts the
-# next reload after a pause instead; fzf then shows its loading spinner
-# through the pause.
+# Live: redraw the preview ten times a second so it follows the agent as it
+# types, and reload the list (statuses) every second. Without fzf's timer,
+# each finished load starts the next reload after a pause instead, which
+# also redraws the preview; fzf then shows its loading spinner through the
+# pause.
 # shellcheck disable=SC2016 # expanded by fzf's shell
 if fzf_has_timer; then
-  opts+=(--bind 'every(1):reload-sync("$AGENT_POPUP_PICKER" --list)+refresh-preview')
+  opts+=(--bind 'every(0.1):refresh-preview'
+    --bind 'every(1):reload-sync("$AGENT_POPUP_PICKER" --list)')
 else
   opts+=(--bind 'load:reload-sync(sleep 1; "$AGENT_POPUP_PICKER" --list)+refresh-preview')
 fi

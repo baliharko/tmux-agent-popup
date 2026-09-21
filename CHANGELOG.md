@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- The picker's preview redraws ten times a second instead of once, so an
+  agent's output streams in as it types. The list still updates every
+  second.
+
 ## 0.2.0
 
 - `prefix u` opens a session picker: every running agent in fzf, with a live
