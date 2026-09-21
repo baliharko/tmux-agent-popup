@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Open an agent for the directory of the pane a key was pressed in, in a popup
+# attached to that agent's own tmux session. Pressed from inside an agent
+# popup, it dismisses the popup instead; the agent keeps running.
+#
+#   open-agent <agent> <client> <pane>
+#
+# The key binding passes #{client_name} and #{pane_id}. Everything else is
+# looked up from those, so paths never go through shell quoting.
+set -u
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=helpers.sh
+. "$DIR/helpers.sh"
+
+agent="$1" client="$2" pane="$3"
+
+if [ -n "$(tmux display-message -p -t "$pane" '#{@agent_popup_agent}')" ]; then
+  tmux detach-client -t "$client"
+  exit 0
+fi
+
+dir="$(tmux display-message -p -t "$pane" '#{pane_current_path}')"
+[ -n "$dir" ] || exit 0
+session="$(session_name "$agent" "$dir")"
+
+if ! tmux has-session -t "=$session" 2>/dev/null; then
+  cmd="$(agent_option "$agent" cmd)"
+  bin="${cmd%% *}"
+  case "$bin" in
+  *=*) ;; # starts with VAR=value; leave it to the shell
+  *)
+    if ! command -v "$bin" >/dev/null 2>&1; then
+      tmux display-message -c "$client" "agent-popup: $bin not found"
+      exit 0
+    fi
+    ;;
+  esac
+  tmux new-session -d -s "$session" -c "$dir" "$cmd"
+fi
+
+# Set on every open, so config changes reach sessions that already exist.
+# The last two override global settings that would keep the popup open after
+# the agent exits. set-option takes a pane target, so exact-match needs the
+# trailing colon: '=name' alone is "no such session".
+target="=$session:"
+tmux set-option -t "$target" @agent_popup_agent "$agent" \; \
+  set-option -t "$target" @agent_popup_path "$dir" \; \
+  set-option -t "$target" status "$(get_option @agent_popup_status off)" \; \
+  set-option -t "$target" detach-on-destroy on \; \
+  set-option -w -t "$target" remain-on-exit off
+
+project="${dir##*/}"
+title=" $(agent_option "$agent" label) · ${project//\#/##} "
+
+tmux display-popup -c "$client" \
+  -w "$(get_option @agent_popup_width 90%)" \
+  -h "$(get_option @agent_popup_height 90%)" \
+  -b "$(get_option @agent_popup_border rounded)" \
+  -T "$title" \
+  -E "tmux attach-session -t '=$session'"
