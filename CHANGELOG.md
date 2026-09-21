@@ -5,6 +5,8 @@
 - The picker's preview redraws ten times a second instead of once, so an
   agent's output streams in as it types. The list still updates every
   second.
+- Fixed: the picker could list a phantom agent for a dead pane (kept by
+  `remain-on-exit`), whose old tty had been given to another program.
 
 ## 0.2.0
 
