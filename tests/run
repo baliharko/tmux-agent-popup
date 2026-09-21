@@ -82,25 +82,31 @@ fail() {
   t show-messages 2>/dev/null | tail -n 3 | sed 's/^/        message /'
 }
 
-# wait_for <command...>: poll until the command succeeds, up to 5 seconds.
-wait_for() {
-  for _ in $(seq 50); do
+# wait_up_to <seconds> <command...>: poll until the command succeeds.
+wait_up_to() {
+  local tries=$(($1 * 10))
+  shift
+  for _ in $(seq "$tries"); do
     "$@" 2>/dev/null && return 0
     sleep 0.1
   done
   return 1
 }
+# wait_for <command...>: up to 5 seconds.
+wait_for() { wait_up_to 5 "$@"; }
 # check <description> <command...>
 # A client that exits was detached, which ends the run: nothing after it can
 # pass.
 check() {
   local desc="$1"
   shift
-  if wait_for "$@"; then pass "$desc"; else fail "$desc"; fi
+  local ok=0
+  if wait_for "$@"; then pass "$desc"; else fail "$desc"; ok=1; fi
   if ! kill -0 "$CPID" 2>/dev/null; then
     echo "the test client exited (detached?); stopping"
     exit 1
   fi
+  return "$ok"
 }
 # settle: for checks that something did NOT happen.
 settle() { sleep 0.7; }
@@ -113,6 +119,15 @@ goto() {
 }
 
 press() { printf '%s\n' "$1" >&3; }
+# open_picker: prefix u, and wait for the picker's rows. A key pressed while
+# the previous popup is still closing goes to that popup and is lost; a
+# person would press it again, so the test does too, but only when no picker
+# came up at all (a second press would type into an open one).
+open_picker() {
+  press '\x02u'
+  wait_up_to 2 screen_has 'ctrl-x: kill' || press '\x02u'
+  wait_for screen_has '● '
+}
 snap() {
   rm -f "$TMP/snap"
   printf '#snap %s\n' "$TMP/snap" >&3
@@ -163,11 +178,12 @@ fzf_at_least() {
 }
 # fzf's loading spinner (one of its braille frames) on the count line.
 spinner_on() { grep -E '[0-9]+/[0-9]+' "$TMP/snap" | grep -qE '⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏'; }
-# mostly_idle_spinner: the spinner is off in at least 3 of 4 screens taken a
-# quarter second apart, i.e. it only shows while a refresh actually runs.
+# mostly_idle_spinner: the spinner is off in at least half of 6 screens taken
+# a quarter second apart, i.e. it shows while a refresh runs, not all the
+# time as with a pause inside the reload (about 90% on).
 mostly_idle_spinner() {
   local off=0
-  for _ in 1 2 3 4; do
+  for _ in 1 2 3 4 5 6; do
     snap && ! spinner_on && off=$((off + 1))
     sleep 0.25
   done
@@ -289,7 +305,7 @@ else
   proj_session="$(t list-sessions -F '#S' | grep '^agent-claude-my_proj_x_nvim-')"
   press '\x02a'
   wait_for no_popup
-  press '\x02u'
+  open_picker
   check 'prefix u opens the picker' screen_has 'ctrl-x: kill'
   check 'the picker title has the chevrons' screen_has "$L Agents $R"
   check 'it lists agents from every directory' screen_has 'my proj:x.nvim'
@@ -302,15 +318,13 @@ else
   check 'enter opens the chosen agent in the popup' attached_to "$proj_session"
   press '\x02a'
   check 'prefix a dismisses an agent opened from the picker' no_popup
-  press '\x02u'
-  wait_for screen_has '● ' # rows loaded, not just the header
+  open_picker
   press '\x18'
   check 'ctrl-x kills the highlighted agent' sessions_named claude 1
   check '... and the list reloads without it' screen_has 'ctrl-x: kill'
   press '\x1b'
   check 'escape closes the picker' no_picker
-  press '\x02u'
-  wait_for screen_has '● ' # rows loaded, not just the header
+  open_picker
   press '\r'
   wait_for popup_on claude
   press '\x02u'
@@ -324,37 +338,52 @@ else
     "bash -c 'echo \"Working (3s - esc to interrupt)\"; exec -a codex sleep 600'"
   loose_pane="$(t list-panes -t main:1 -F '#{pane_id}')"
   loose_pid="$(t list-panes -t main:1 -F '#{pane_pid}')"
-  press '\x02u'
+  open_picker
   check 'an agent started by hand in a pane is listed' screen_has 'main:1.0'
   check '... as working while it offers to interrupt' screen_has '● working  Codex'
   press '\r'
   check 'enter switches the terminal to its pane' client_pane_is "$loose_pane"
   check '... and closes the picker' no_picker
-  press '\x02u'
-  wait_for screen_has 'main:1.0'
+  open_picker
+  # Typing "main" keeps the agent's row and shows whether the reopened picker
+  # gets keys at all, apart from whether ctrl-x then stops the agent.
+  press 'main'
+  check 'the reopened picker gets keys' screen_has '> main'
   press '\x18'
-  check 'ctrl-x stops that agent' process_gone "$loose_pid"
-  press '\x1b'
+  if ! check 'ctrl-x stops that agent' process_gone "$loose_pid"; then
+    echo "        processes on the agent's tty:"
+    ps -o pid=,ppid=,stat=,args= -t "$(t display-message -p -t "$loose_pane" '#{pane_tty}' | sed 's|^/dev/||')" |
+      sed 's/^/          /'
+    echo "        picker processes left:"
+    pgrep -fl "$PLUGIN/scripts/pick-session|fzf " | sed 's/^/          /'
+  fi
+  press '\x03' # ctrl-c: typing "main" put the picker in search mode, where esc doesn't close it
   wait_for no_picker
 
   echo "live updates"
-  # A stand-in agent that works for three seconds, then clears its screen and
-  # idles, counting ten times a second all along. exec -a names the process
-  # like an agent.
+  # A stand-in agent that counts ten times a second and says it's working
+  # until the test creates $TMP/livebot.done; then it clears its screen and
+  # idles. The file, not a timer, decides, so a slow machine can't miss the
+  # working phase. exec -a names the process like an agent.
   cat >"$TMP/livebot" <<'EOF'
 #!/bin/sh
-i=0
+done_file="$(dirname "$0")/livebot.done"
+i=0 idle=''
 while :; do
   i=$((i + 1))
-  [ "$i" -eq 31 ] && printf '\033[2J\033[H'
-  if [ "$i" -le 30 ]; then echo "tick-$i (esc to interrupt)"; else echo "tick-$i"; fi
+  if [ -z "$idle" ] && [ -e "$done_file" ]; then
+    idle=1
+    printf '\033[2J\033[H'
+  fi
+  if [ -z "$idle" ]; then echo "tick-$i (esc to interrupt)"; else echo "tick-$i"; fi
   sleep 0.1
 done
 EOF
   t new-window -d -t main:3 -c "$PROJ" "bash -c 'exec -a copilot sh \"\$0\"' '$TMP/livebot'"
   livebot_pane="$(t list-panes -t main:3 -F '#{pane_id}')"
-  press '\x02u'
+  open_picker
   check 'a working agent is marked working' screen_has '● working  Copilot'
+  touch "$TMP/livebot.done"
   check '... and idle once it stops, while the picker stays open' screen_has '● idle     Copilot'
   first_tick="$(max_tick)"
   check 'the preview follows the agent live' ticks_past "${first_tick:-0}"
@@ -374,7 +403,7 @@ EOF
     wait_for popup_on claude
     press '\x02a'
     wait_for no_popup
-    press '\x02u'
+    open_picker
     check 'the picker starts in nav mode' screen_has 'nav>'
     check '... and says which keys do what' screen_has 'j/k: move'
     wait_for screen_has '● idle     Copilot'
@@ -383,8 +412,7 @@ EOF
     press 'l'
     check 'j then l opens the second agent' client_pane_is "$livebot_pane"
     goto select-window -t main:0
-    press '\x02u'
-    wait_for screen_has '● '
+    open_picker
     press 'j'
     press 'k'
     sleep 0.3
@@ -392,8 +420,7 @@ EOF
     check 'k moves back up' popup_on claude
     press '\x02a'
     wait_for no_popup
-    press '\x02u'
-    wait_for screen_has '● '
+    open_picker
     press '/'
     check '/ switches to search' screen_has 'search>'
     press "'Copilot" # exact; fuzzy would also hit the long temp paths
@@ -403,8 +430,7 @@ EOF
     check '... and keeps the filter' screen_has '1/2'
     press 'q'
     check 'q closes the picker' no_picker
-    press '\x02u'
-    wait_for screen_has '● '
+    open_picker
     press 'x'
     check 'typing any other key starts a search' screen_has 'search>'
     press '\x1b'
