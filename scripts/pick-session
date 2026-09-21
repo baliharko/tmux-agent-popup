@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# The session picker, run by choose-session inside a popup. Lists every agent
+# in fzf with a live preview of its screen: the plugin's own sessions, and
+# agents started by hand in ordinary panes. enter opens one: a session in
+# this same popup, a pane by switching the terminal to it. ctrl-x kills it.
+#
+#   pick-session                                 run the picker
+#   pick-session --list                          print the rows
+#   pick-session --preview <kind> <target>       print an agent's screen
+#   pick-session --kill <kind> <target> <pid>    stop an agent
+#   pick-session --esc                           what esc does, for fzf
+#
+# Rows are "<kind>\t<target>\t<pid>\t<display>". kind "session": target is a
+# session this plugin runs. kind "pane": target is a pane running an agent on
+# its own, pid the agent's process. AGENT_POPUP_CLIENT, set by
+# choose-session, is the client the popup is shown on.
+set -u
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=helpers.sh
+. "$DIR/helpers.sh"
+
+# Two modes on fzf 0.46 and newer, told apart by the prompt. nav: j/k move,
+# l opens, h/q/esc close, g/G jump to the ends. search: every key types into
+# the filter; esc goes back to nav and keeps it. / or any unbound key in nav
+# mode switches to search.
+NAV_PROMPT='nav> ' SEARCH_PROMPT='search> '
+NAV_KEYS='h,j,k,l,g,G,q,/'
+NAV_HEADER='j/k: move · l: open · /: search · ctrl-x: kill · q: close'
+SEARCH_HEADER='enter: open · esc: back to j/k · ctrl-x: kill'
+TO_SEARCH="unbind($NAV_KEYS,change)+change-prompt($SEARCH_PROMPT)+change-header($SEARCH_HEADER)"
+TO_NAV="rebind($NAV_KEYS,change)+change-prompt($NAV_PROMPT)+change-header($NAV_HEADER)"
+
+# fzf_at_least <major> <minor>
+fzf_at_least() {
+  local v major minor
+  v="$(fzf --version 2>/dev/null)"
+  v="${v%% *}"
+  case "$v" in
+  [0-9]*.[0-9]*) ;;
+  *) return 1 ;;
+  esac
+  major="${v%%.*}" minor="${v#*.}"
+  minor="${minor%%.*}"
+  [ "$major" -gt "$1" ] || { [ "$major" -eq "$1" ] && [ "$minor" -ge "$2" ]; }
+}
+
+# fzf_has_timer: whether fzf has the every(N) event. An fzf without it
+# rejects the binding at startup with status 2.
+fzf_has_timer() {
+  fzf --filter x --bind 'every(1):ignore' </dev/null >/dev/null 2>&1
+  [ "$?" -ne 2 ]
+}
+
+# is_working <target>
+# True when the bottom of the agent's screen offers to interrupt it, as
+# Claude Code and Codex do only while they work ("esc to interrupt"). Only
+# the bottom lines count, so the conversation itself can't trigger it. Screen
+# activity won't do: Codex animates while it waits for input.
+is_working() {
+  tmux capture-pane -pt "$1" | awk 'NF' | tail -n 8 |
+    grep -qiE 'esc to (interrupt|cancel)'
+}
+
+# loose_agents
+# Agents running in ordinary panes, outside the plugin's sessions. A pane
+# runs an agent when a process on its tty is named like one of the configured
+# agents; for node, bun, deno or python, the script's name counts. One line
+# per pane, fields separated by \037: agent, pane, pid, session:window.pane,
+# directory.
+loose_agents() {
+  {
+    tmux list-panes -a -F "T$US#{pane_tty}$US#{pane_id}$US#{session_name}:#{window_index}.#{pane_index}$US#{@agent_popup_agent}$US#{pane_current_path}"
+    ps -A -ww -o tty=,pid=,args=
+  } | awk -v us="$US" -v names="$(configured_agents | tr '\n' ' ')" '
+    BEGIN { n = split(names, list, " "); for (i = 1; i <= n; i++) known[list[i]] = 1 }
+    substr($0, 1, 2) == "T" us {
+      split($0, f, us)
+      if (f[5] != "") next # a pane in one of our sessions; listed as a session
+      tty = f[2]
+      sub(/^\/dev\//, "", tty)
+      pane[tty] = f[3]; where[tty] = f[4]; dir[tty] = f[6]
+      next
+    }
+    !($1 in pane) || seen[$1] { next }
+    {
+      exe = $3
+      sub(/.*\//, "", exe)
+      if (exe ~ /^(node|bun|deno|python[0-9.]*)$/)
+        for (j = 4; j <= NF; j++)
+          if ($j !~ /^-/) { exe = $j; sub(/.*\//, "", exe); break }
+      if (!(exe in known)) next
+      seen[$1] = 1
+      print exe us pane[$1] us $2 us where[$1] us dir[$1]
+    }'
+}
+
+# row <kind> <target> <pid> <agent> <directory> <note> <recency>
+# Prints sort keys, then the row. The order doesn't depend on status, so the
+# live reload never moves a row out from under the cursor: the plugin's
+# sessions, most recently opened first, then agents in ordinary panes.
+row() {
+  local order status place
+  if [ "$1" = session ]; then order=0; else order=1; fi
+  if is_working "$(target_of "$1" "$2")"; then
+    status=$'\033[33m●\033[0m working'
+  else
+    status=$'\033[32m●\033[0m idle   '
+  fi
+  case "$5" in
+  "$HOME" | "$HOME"/*) place="~${5#"$HOME"}" ;;
+  *) place="$5" ;;
+  esac
+  # The note ("open", or where a hand-started agent runs) goes before the
+  # path, which fzf cuts off first when the line is too long.
+  printf '%s\t%s\t%s\t%s\t%s\t%s  %-12s \033[1m%-20s\033[0m %-10s \033[2m%s\033[0m\n' \
+    "$order" "$7" "$1" "$2" "$3" \
+    "$status" "$(agent_option "$4" label)" "${5##*/}" "$6" "$place"
+}
+
+list_rows() {
+  local agent target pid last attached path where
+  {
+    agent_sessions | while IFS="$US" read -r agent target last attached path; do
+      if [ "$attached" -gt 0 ]; then where=open; else where=''; fi
+      row session "$target" '' "$agent" "$path" "$where" "${last:-1}"
+    done
+    loose_agents | while IFS="$US" read -r agent target pid where path; do
+      row pane "$target" "$pid" "$agent" "$path" "$where" 0
+    done
+  } | sort -t $'\t' -k1,1n -k2,2nr | cut -f3-
+}
+
+# target_of <kind> <target>: a tmux target for the agent's pane.
+target_of() {
+  if [ "$1" = session ]; then printf '=%s:' "$2"; else printf '%s' "$2"; fi
+}
+
+case "${1:-}" in
+--list)
+  list_rows
+  exit 0
+  ;;
+--preview)
+  # Without the blank lines below the agent's output, fzf's follow shows the
+  # end of it (the input box) rather than empty space.
+  tmux capture-pane -ept "$(target_of "$2" "$3")" | awk '
+    { plain = $0; gsub(/\033\[[0-9;]*m/, "", plain) }
+    plain ~ /^[[:space:]]*$/ { blank = blank $0 "\n"; next }
+    { printf "%s%s\n", blank, $0; blank = "" }'
+  exit 0
+  ;;
+--esc)
+  # From search back to nav; from nav, close the picker.
+  if [ "${FZF_PROMPT:-}" = "$SEARCH_PROMPT" ]; then printf '%s' "$TO_NAV"; else printf abort; fi
+  exit 0
+  ;;
+--kill)
+  # A session goes entirely. For a pane, only the agent: the pane keeps
+  # whatever it was started from, usually a shell.
+  if [ "$2" = session ]; then
+    tmux kill-session -t "=$3"
+  else
+    kill "$4"
+    sleep 0.3 # let it exit before the list is reloaded
+  fi
+  exit 0
+  ;;
+esac
+
+# fzf runs the commands below with $SHELL, so pin it for predictable parsing.
+# They find this script through the environment, so its path needs no
+# quoting; fzf quotes {1}, {2} and {3} itself.
+export SHELL=/bin/sh FZF_DEFAULT_OPTS='' AGENT_POPUP_PICKER="$DIR/pick-session"
+# shellcheck disable=SC2016 # expanded by fzf's shell
+opts=(--ansi --no-sort --reverse --cycle --delimiter $'\t' --with-nth 4
+  --preview '"$AGENT_POPUP_PICKER" --preview {1} {2}'
+  --preview-window 'up,70%,follow'
+  --bind 'ctrl-x:execute-silent("$AGENT_POPUP_PICKER" --kill {1} {2} {3})+reload("$AGENT_POPUP_PICKER" --list)')
+# Live: reload the list and redraw the preview every second, so statuses and
+# screens stay current. Without fzf's timer, each finished load starts the
+# next reload after a pause instead; fzf then shows its loading spinner
+# through the pause.
+# shellcheck disable=SC2016 # expanded by fzf's shell
+if fzf_has_timer; then
+  opts+=(--bind 'every(1):reload-sync("$AGENT_POPUP_PICKER" --list)+refresh-preview')
+else
+  opts+=(--bind 'load:reload-sync(sleep 1; "$AGENT_POPUP_PICKER" --list)+refresh-preview')
+fi
+if fzf_at_least 0 46; then
+  # shellcheck disable=SC2016 # expanded by fzf's shell
+  opts+=(--prompt "$NAV_PROMPT" --header "$NAV_HEADER"
+    --bind 'j:down,k:up,l:accept,h:abort,q:abort,g:first,G:last'
+    --bind "/:$TO_SEARCH" --bind "change:$TO_SEARCH"
+    --bind 'esc:transform:"$AGENT_POPUP_PICKER" --esc')
+else
+  opts+=(--header 'enter: open · ctrl-x: kill')
+fi
+selected="$(list_rows | fzf "${opts[@]}")"
+[ -n "$selected" ] || exit 0
+
+kind="${selected%%$'\t'*}"
+rest="${selected#*$'\t'}"
+target="${rest%%$'\t'*}"
+client="${AGENT_POPUP_CLIENT:-}"
+
+if [ "$kind" = pane ]; then
+  # Show the agent where it runs. The popup closes when this script exits.
+  tmux switch-client -c "$client" -t "$target"
+  exit 0
+fi
+
+# Become the agent's client in this same popup. Closing it and opening a
+# fresh one would race tmux's popup teardown, which can leave the new popup
+# without keyboard input.
+tmux set-option -t "=$target:" @agent_popup_host "$client"
+exec tmux attach-session -t "=$target"

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# A navigation key (see agent-popup.tmux) pressed in an agent session. In an
+# agent popup it closes the popup and replays the key on the client the popup
+# is shown on, so it switches that client's window. Anywhere else, e.g. a
+# terminal that switched to the agent session with prefix s, it replays the
+# key on that client as if it were never wrapped.
+#
+#   passthrough <client> <key> [<host>]
+#
+# <host> is the session's @agent_popup_host: the client the popup is on.
+set -u
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=helpers.sh
+. "$DIR/helpers.sh"
+
+client="$1" key="$2" host="${3:-}"
+
+if ! is_popup_client "$client"; then
+  tmux switch-client -c "$client" -T agent-popup-keys \; send-keys -K -c "$client" "$key"
+  exit 0
+fi
+
+if [ -z "$host" ] || ! tmux list-clients -F '#{client_name}' | grep -qxF "$host"; then
+  # Opened by an older version, or its terminal is gone: just close it.
+  tmux detach-client -t "$client"
+  exit 0
+fi
+
+# One command sequence, so the key reaches the host only after the popup is
+# gone. -C takes the popup's client with it; the agent keeps running.
+tmux display-popup -C -c "$host" \; \
+  switch-client -c "$host" -T agent-popup-keys \; \
+  send-keys -K -c "$host" "$key"

@@ -27,6 +27,19 @@ agent_option() {
   get_option "@agent_popup_$1_$2" "$(agent_default "$1" "$2")"
 }
 
+# configured_agents
+# The names in @agent_popup_agents, one per line, skipping any that can't be
+# used in option and session names.
+configured_agents() {
+  local agent
+  for agent in $(get_option @agent_popup_agents 'claude codex copilot'); do
+    case "$agent" in
+    *[!A-Za-z0-9_-]*) continue ;;
+    esac
+    printf '%s\n' "$agent"
+  done
+}
+
 # is_popup_client <client>
 # True when <client> is the nested client inside one of our popups. tmux
 # starts a popup's command itself, and open-agent execs the client there, so
@@ -52,12 +65,44 @@ leave_agent_session() {
   fi
 }
 
+# agent_sessions
+# One line per agent session, fields separated by \037: agent, session, when
+# it was last attached (epoch seconds), how many clients are attached, and
+# its directory. \037 rather than a tab, because `read` merges runs of tabs
+# and an empty field would shift the rest.
+agent_sessions() {
+  tmux list-sessions -F "#{@agent_popup_agent}$US#{session_name}$US#{session_last_attached}$US#{session_attached}$US#{@agent_popup_path}" |
+    awk -F"$US" '$1 != ""'
+}
+US=$'\037'
+
 # dir_agents <dir>
 # Agents with a running session for <dir>, most recently attached first.
 dir_agents() {
-  tmux list-sessions -F $'#{session_last_attached}\t#{@agent_popup_agent}\t#{@agent_popup_path}' |
-    AGENT_DIR="$1" awk -F'\t' '$2 != "" && $3 == ENVIRON["AGENT_DIR"] { print $1 "\t" $2 }' |
+  agent_sessions |
+    AGENT_DIR="$1" awk -F"$US" '$5 == ENVIRON["AGENT_DIR"] { print $3 "\t" $1 }' |
     sort -rn | cut -f2
+}
+
+# titled <text>
+# A popup or menu title: <text> between Powerline thin chevrons (U+E0B3 and
+# U+E0B1), as craftzdog's tmux-claude-hatch draws them. Titles are formats,
+# so # is doubled.
+titled() {
+  printf '\356\202\263 %s \356\202\261' "${1//\#/##}"
+}
+
+# show_popup <client> <title> <display-popup args...>
+# A popup in the configured size and border. Blocks until it closes.
+show_popup() {
+  local client="$1" title="$2"
+  shift 2
+  tmux display-popup -c "$client" \
+    -w "$(get_option @agent_popup_width 90%)" \
+    -h "$(get_option @agent_popup_height 90%)" \
+    -b "$(get_option @agent_popup_border rounded)" \
+    -T "$(titled "$title")" \
+    "$@"
 }
 
 # session_name <agent> <dir>

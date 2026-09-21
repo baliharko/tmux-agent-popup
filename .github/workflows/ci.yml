@@ -25,14 +25,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install tmux
+      - name: Install tmux and fzf
         run: |
           if [ "$RUNNER_OS" = macOS ]; then
-            brew install tmux
+            brew install tmux fzf
           else
-            sudo apt-get update && sudo apt-get install -y tmux
+            sudo apt-get update && sudo apt-get install -y tmux fzf
           fi
           tmux -V
+          fzf --version
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"

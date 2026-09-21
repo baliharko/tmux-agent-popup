@@ -33,8 +33,9 @@ if ! tmux has-session -t "=$session" 2>/dev/null; then
 fi
 
 # Set on every open, so config changes reach sessions that already exist.
-# The last two override global settings that would keep the popup open after
-# the agent exits. set-option takes a pane target, so exact-match needs the
+# @agent_popup_host is the client the popup goes on, for navigation keys
+# pressed inside it (scripts/passthrough). The last two override global
+# settings that would keep the popup open after the agent exits. set-option takes a pane target, so exact-match needs the
 # trailing colon: '=name' alone is "no such session".
 #
 # If the agent has already exited (e.g. on a bad flag), the session is gone
@@ -43,6 +44,7 @@ target="=$session:"
 label="$(agent_option "$agent" label)"
 if ! tmux set-option -t "$target" @agent_popup_agent "$agent" \; \
   set-option -t "$target" @agent_popup_path "$dir" \; \
+  set-option -t "$target" @agent_popup_host "$client" \; \
   set-option -t "$target" status "$(get_option @agent_popup_status off)" \; \
   set-option -t "$target" detach-on-destroy on \; \
   set-option -w -t "$target" remain-on-exit off 2>/dev/null ||
@@ -52,14 +54,7 @@ if ! tmux set-option -t "$target" @agent_popup_agent "$agent" \; \
   exit 0
 fi
 
-# The banner: the agent's name between Powerline thin chevrons (U+E0B3 and
-# U+E0B1), as craftzdog's tmux-claude-hatch draws it. -T is a format, so a #
-# in a label has to be doubled.
-title=" ${label//\#/##} "
-
-tmux display-popup -c "$client" \
-  -w "$(get_option @agent_popup_width 90%)" \
-  -h "$(get_option @agent_popup_height 90%)" \
-  -b "$(get_option @agent_popup_border rounded)" \
-  -T "$title" \
-  -E "exec tmux attach-session -t '=$session'"
+# A popup closed by a navigation key (scripts/passthrough, display-popup -C)
+# reports its killed client's status, 129. That's not an error, and tmux would
+# show any failure in the pane the key was pressed in.
+show_popup "$client" "$label" -E "exec tmux attach-session -t '=$session'" || :

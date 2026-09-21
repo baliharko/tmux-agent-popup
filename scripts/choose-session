@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Open the session picker (pick-session) in a popup: every running agent, in
+# any directory, including ones started by hand in ordinary panes. Inside an
+# agent popup it dismisses the popup instead, like the other keys.
+#
+#   choose-session <client> <pane>
+set -u
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=helpers.sh
+. "$DIR/helpers.sh"
+
+client="$1" pane="$2"
+
+leave_agent_session "$client" "$pane" && exit 0
+
+if ! command -v fzf >/dev/null 2>&1; then
+  tmux display-message -c "$client" 'agent-popup: the session picker needs fzf'
+  exit 0
+fi
+if [ -z "$("$DIR/pick-session" --list)" ]; then
+  tmux display-message -c "$client" 'agent-popup: no agents running'
+  exit 0
+fi
+
+# The popup's command finds the picker through the environment, so the
+# install path needs no quoting for whatever shell runs it. The picker needs
+# this client to switch it to agents in ordinary panes.
+# shellcheck disable=SC2016 # expanded by the popup's shell
+show_popup "$client" Agents \
+  -e "AGENT_POPUP_PICKER=$DIR/pick-session" -e "AGENT_POPUP_CLIENT=$client" \
+  -E 'exec "$AGENT_POPUP_PICKER"' || : # see the end of open-agent

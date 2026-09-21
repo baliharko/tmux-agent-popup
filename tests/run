@@ -46,18 +46,20 @@ set -g default-shell /bin/sh
 set -g remain-on-exit on
 set -g detach-on-destroy off
 set -g @agent_popup_agents 'claude codex copilot broken'
-set -g @agent_popup_claude_cmd  'sleep 600'
+set -g @agent_popup_claude_cmd  'sh -c "echo claude-standin-screen; exec sleep 600"'
 set -g @agent_popup_codex_cmd   'cat'
 set -g @agent_popup_copilot_cmd 'no-such-agent-binary --flag'
 set -g @agent_popup_broken_cmd  'false'
 set -g @agent_popup_broken_label 'Broken'
 set -g @agent_popup_root_key 'M-a'
+bind k select-window -t :=5 \; display-message 'custom k'
 EOF
 t -f "$TMP/tmux.conf" new-session -d -s main -x 100 -y 30 -c "$PROJ"
 SOCKET="$(t display-message -p '#{socket_path}')"
 # Load the plugin the way TPM does: run the .tmux file with $TMUX pointing at
 # the server.
-TMUX="$SOCKET,$(t display-message -p '#{pid}'),0" "$PLUGIN/agent-popup.tmux"
+load_plugin() { TMUX="$SOCKET,$(t display-message -p '#{pid}'),0" "$PLUGIN/agent-popup.tmux"; }
+load_plugin
 
 mkfifo "$TMP/ctl"
 "$PYTHON" "$ROOT/tests/pty_client.py" "$SOCK" "$TMP/ctl" &
@@ -74,6 +76,9 @@ pass() { printf '  ok    %s\n' "$1"; }
 fail() {
   printf '  FAIL  %s\n' "$1"
   failures=$((failures + 1))
+  # The last screen the check looked at, if it looked at one, and who's where.
+  [ -f "$TMP/snap" ] && sed 's/^/        | /' "$TMP/snap"
+  t list-clients -F '        client #{client_name} -> #{client_session}'
 }
 
 # wait_for <command...>: poll until the command succeeds, up to 5 seconds.
@@ -111,13 +116,48 @@ session_for() { t list-sessions -F '#S' | grep "^agent-$1-" | head -n 1; }
 has_session() { [ -n "$(session_for "$1")" ]; }
 no_session() { ! has_session "$1"; }
 popup_on() { t list-clients -F '#{client_session}' | grep -q "^agent-$1-"; }
+attached_to() { t list-clients -F '#{client_session}' | grep -qx "$1"; }
+no_picker() { snap && ! grep -qF 'ctrl-x: kill' "$TMP/snap"; }
 no_popup() { ! t list-clients -F '#{client_session}' | grep -q '^agent-'; }
 main_attached() { t list-clients -F '#{client_session}' | grep -qx main; }
 sessions_named() { [ "$(t list-sessions -F '#S' | grep -c "^agent-$1-")" -eq "$2" ]; }
 # opt_is <agent> <option> <value> [-w]
 opt_is() { [ "$(t show-options ${4:+"$4"} -t "=$(session_for "$1"):" "$2")" = "$2 $3" ]; }
+client_pane_is() { [ "$(t display-message -p -c "$(t list-clients -F '#{client_name}' | head -n 1)" '#{pane_id}')" = "$1" ]; }
+# The highest tick-N on screen: livebot's counter, as the preview shows it.
+max_tick() { snap && grep -oE 'tick-[0-9]+' "$TMP/snap" | sed 's/tick-//' | sort -n | tail -n 1; }
+ticks_past() { [ "$(max_tick)" -gt "$1" ]; }
+# fzf_at_least <major> <minor>, as in pick-session.
+fzf_at_least() {
+  local v
+  v="$(fzf --version 2>/dev/null)"
+  v="${v%% *}"
+  [ "${v%%.*}" -gt "$1" ] || { [ "${v%%.*}" -eq "$1" ] && [ "$(printf '%s' "${v#*.}" | cut -d. -f1)" -ge "$2" ]; }
+}
+# fzf's loading spinner (one of its braille frames) on the count line.
+spinner_on() { grep -E '[0-9]+/[0-9]+' "$TMP/snap" | grep -qE '⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏'; }
+# mostly_idle_spinner: the spinner is off in at least 3 of 4 screens taken a
+# quarter second apart, i.e. it only shows while a refresh actually runs.
+mostly_idle_spinner() {
+  local off=0
+  for _ in 1 2 3 4; do
+    snap && ! spinner_on && off=$((off + 1))
+    sleep 0.25
+  done
+  [ "$off" -ge 3 ]
+}
+# fzf_has_timer, as in pick-session.
+fzf_has_timer() {
+  fzf --filter x --bind 'every(1):ignore' </dev/null >/dev/null 2>&1
+  [ "$?" -ne 2 ]
+}
+process_gone() { ! kill -0 "$1" 2>/dev/null; }
+window_is() { [ "$(t display-message -p -t main: '#{window_index}')" = "$1" ]; }
+wrapped_keys() { [ "$(t list-keys -T prefix | grep -c 'scripts/passthrough')" -eq "$1" ]; }
 in_dir() { [ "$(t display-message -p -t main: '#{pane_current_path}')" = "$1" ]; }
-no_view_mode() { [ "$(t display-message -p -t main: '#{pane_in_mode}')" = 0 ]; }
+# Script failures and output show up in view mode, in whichever pane the key
+# was pressed in, not necessarily the current one.
+no_view_mode() { ! t list-panes -a -F '#{pane_in_mode}' | grep -q 1; }
 
 wait_for main_attached || {
   echo "client failed to attach" >&2
@@ -196,8 +236,8 @@ t switch-client -c "$(t list-clients -F '#{client_name}' | head -n 1)" -t "=$(se
 press '\x02a'
 check 'prefix a says so instead of detaching the terminal' screen_has 'already in an agent session'
 check 'the terminal stays attached' popup_on claude
-t switch-client -c "$(t list-clients -F '#{client_name}' | head -n 1)" -t '=main:'
-wait_for main_attached
+press '\x02('
+check 'prefix ( there still switches back, as normal' main_attached
 
 echo "another directory"
 t send-keys -t main: "cd '$OTHER'" Enter
@@ -211,6 +251,174 @@ press '\x02a'
 wait_for screen_has 'Agents'
 press '1'
 check 'the new directory gets its own session' sessions_named claude 2
+# Wait for its popup to attach too: keys typed while it starts are replayed
+# into it afterwards, like typeahead.
+wait_for popup_on claude
+
+echo "session picker"
+if ! command -v fzf >/dev/null 2>&1; then
+  echo "  skipped: fzf is not installed"
+else
+  proj_session="$(t list-sessions -F '#S' | grep '^agent-claude-my_proj_nvim-')"
+  press '\x02a'
+  wait_for no_popup
+  press '\x02u'
+  check 'prefix u opens the picker' screen_has 'ctrl-x: kill'
+  check 'the picker title has the chevrons' screen_has "$L Agents $R"
+  check 'it lists agents from every directory' screen_has 'my proj.nvim'
+  check '... including the other one' screen_has 'other'
+  check 'agents that went quiet are marked idle' screen_has '● idle'
+  check 'the preview shows the agent screen' screen_has 'claude-standin-screen'
+  press "'proj.nvim" # exact match; fuzzy would also hit the long temp paths
+  sleep 0.3
+  press '\r'
+  check 'enter opens the chosen agent in the popup' attached_to "$proj_session"
+  press '\x02a'
+  check 'prefix a dismisses an agent opened from the picker' no_popup
+  press '\x02u'
+  wait_for screen_has '● ' # rows loaded, not just the header
+  press '\x18'
+  check 'ctrl-x kills the highlighted agent' sessions_named claude 1
+  check '... and the list reloads without it' screen_has 'ctrl-x: kill'
+  press '\x1b'
+  check 'escape closes the picker' no_picker
+  press '\x02u'
+  wait_for screen_has '● ' # rows loaded, not just the header
+  press '\r'
+  wait_for popup_on claude
+  press '\x02u'
+  check 'prefix u inside an agent popup dismisses it' no_popup
+  t kill-session -t "=$(session_for claude)"
+  press '\x02u'
+  check 'prefix u with no agents running says so' screen_has 'no agents running'
+
+  echo "agents outside the plugin"
+  t new-window -d -t main:1 -c "$OTHER" \
+    "bash -c 'echo \"Working (3s - esc to interrupt)\"; exec -a codex sleep 600'"
+  loose_pane="$(t list-panes -t main:1 -F '#{pane_id}')"
+  loose_pid="$(t list-panes -t main:1 -F '#{pane_pid}')"
+  press '\x02u'
+  check 'an agent started by hand in a pane is listed' screen_has 'main:1.0'
+  check '... as working while it offers to interrupt' screen_has '● working  Codex'
+  press '\r'
+  check 'enter switches the terminal to its pane' client_pane_is "$loose_pane"
+  check '... and closes the picker' no_picker
+  press '\x02u'
+  wait_for screen_has 'main:1.0'
+  press '\x18'
+  check 'ctrl-x stops that agent' process_gone "$loose_pid"
+  press '\x1b'
+  wait_for no_picker
+
+  echo "live updates"
+  # A stand-in agent that works for three seconds, then clears its screen and
+  # idles, counting all along. exec -a names the process like an agent.
+  cat >"$TMP/livebot" <<'EOF'
+#!/bin/sh
+i=0
+while :; do
+  i=$((i + 1))
+  [ "$i" -eq 7 ] && printf '\033[2J\033[H'
+  if [ "$i" -le 6 ]; then echo "tick-$i (esc to interrupt)"; else echo "tick-$i"; fi
+  sleep 0.5
+done
+EOF
+  t new-window -d -t main:3 -c "$PROJ" "bash -c 'exec -a copilot sh \"\$0\"' '$TMP/livebot'"
+  livebot_pane="$(t list-panes -t main:3 -F '#{pane_id}')"
+  press '\x02u'
+  check 'a working agent is marked working' screen_has '● working  Copilot'
+  check '... and idle once it stops, while the picker stays open' screen_has '● idle     Copilot'
+  first_tick="$(max_tick)"
+  check 'the preview follows the agent live' ticks_past "${first_tick:-0}"
+  if fzf_has_timer; then
+    check 'the loading spinner only shows during a refresh' mostly_idle_spinner
+  fi
+  press '\x1b'
+  wait_for no_picker
+
+  if fzf_at_least 0 46; then
+    echo "picker keys"
+    t select-window -t main:0
+    press '\x02A'
+    wait_for screen_has 'Agents'
+    press '1'
+    wait_for popup_on claude
+    press '\x02a'
+    wait_for no_popup
+    press '\x02u'
+    check 'the picker starts in nav mode' screen_has 'nav>'
+    check '... and says which keys do what' screen_has 'j/k: move'
+    wait_for screen_has '● idle     Copilot'
+    press 'j'
+    sleep 0.3
+    press 'l'
+    check 'j then l opens the second agent' client_pane_is "$livebot_pane"
+    t select-window -t main:0
+    press '\x02u'
+    wait_for screen_has '● '
+    press 'j'
+    press 'k'
+    sleep 0.3
+    press 'l'
+    check 'k moves back up' popup_on claude
+    press '\x02a'
+    wait_for no_popup
+    press '\x02u'
+    wait_for screen_has '● '
+    press '/'
+    check '/ switches to search' screen_has 'search>'
+    press "'Copilot" # exact; fuzzy would also hit the long temp paths
+    check '... which filters' screen_has '1/2'
+    press '\x1b'
+    check 'esc goes back to nav mode' screen_has 'nav>'
+    check '... and keeps the filter' screen_has '1/2'
+    press 'q'
+    check 'q closes the picker' no_picker
+    press '\x02u'
+    wait_for screen_has '● '
+    press 'x'
+    check 'typing any other key starts a search' screen_has 'search>'
+    press '\x1b'
+    wait_for screen_has 'nav>'
+    press 'h'
+    check 'h closes the picker' no_picker
+  else
+    echo "picker keys"
+    echo "  skipped: needs fzf 0.46 or newer"
+  fi
+  t kill-window -t main:3 # livebot; the navigation tests count windows
+fi
+
+echo "navigation keys"
+check 'only bound keys are wrapped' wrapped_keys 18
+load_plugin
+check 'loading the plugin again wraps nothing twice' wrapped_keys 18
+t new-window -d -t main:1 2>/dev/null # exists if the picker tests ran
+t new-window -d -t main:5
+t select-window -t main:0
+press '\x02A'
+wait_for screen_has 'Agents'
+press '1'
+wait_for popup_on claude
+press '\x02n'
+check 'prefix n inside the popup closes it' no_popup
+check '... and switches the window underneath' window_is 1
+press '\x02n'
+check 'prefix n elsewhere works as before' window_is 5
+t select-window -t main:0
+press '\x02a'
+wait_for popup_on claude
+press '\x02k'
+check 'a custom binding passes through too' no_popup
+check '... with all of its commands' window_is 5
+t select-window -t main:0
+press '\x02a'
+wait_for popup_on claude
+press '\x025'
+check 'prefix 5 selects window 5 underneath' window_is 5
+check '... and the agent keeps running' has_session claude
+settle
+check 'closing popups this way reports no errors' no_view_mode
 
 echo
 if [ "$failures" -gt 0 ]; then

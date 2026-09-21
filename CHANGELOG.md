@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0
+
+- `prefix u` opens a session picker: every running agent in fzf, with a live
+  preview of its screen. It includes agents started by hand in ordinary
+  panes. The list and preview update every second, and agents showing "esc to
+  interrupt" are marked working. `enter` opens one, `ctrl-x` kills it.
+- The picker opens in a nav mode: `j`/`k` move, `l` opens, `h`/`q` close,
+  `/` or any other key searches (fzf 0.46 or newer).
+- Window and pane keys pressed inside an agent popup (`prefix n`, `prefix 3`,
+  ...) close it and act on the window underneath, using your own bindings.
+
 ## 0.1.0
 
 First release.
