@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck -x agent-popup.tmux scripts/* tests/run
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-24.04 ships tmux 3.4, the oldest supported version.
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tmux
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install tmux
+          else
+            sudo apt-get update && sudo apt-get install -y tmux
+          fi
+          tmux -V
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install pyte
+        run: python -m pip install pyte
+      - name: End-to-end tests
+        run: PYTHON=python tests/run

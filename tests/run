@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# End-to-end tests. Starts a private tmux server, attaches a real client on a
+# pty (tests/pty_client.py), types key presses into it and checks the result.
+# Agents are stand-ins (sleep, cat, false), so no agent CLI is needed.
+#
+#   tests/run            needs tmux 3.4+, python3 with pyte (pip install pyte)
+#   PYTHON=... tests/run use another interpreter
+set -u
+unset TMUX # never touch the tmux server this is run from
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON="${PYTHON:-python3}"
+"$PYTHON" -c 'import pyte' 2>/dev/null || {
+  echo "tests need pyte: $PYTHON -m pip install pyte" >&2
+  exit 2
+}
+
+SOCK="agent-popup-test-$$"
+# Physical path: on macOS the temp dir is behind the /var -> /private/var
+# symlink, and tmux reports resolved paths.
+TMP="$(cd "$(mktemp -d)" && pwd -P)"
+CPID=''
+t() { tmux -L "$SOCK" "$@"; }
+cleanup() {
+  t kill-server 2>/dev/null
+  rm -f "${SOCKET:-}" # kill-server leaves the socket file behind
+  if [ -n "$CPID" ]; then
+    kill "$CPID" 2>/dev/null
+    wait "$CPID" 2>/dev/null
+  fi
+  rm -rf "$TMP"
+}
+trap cleanup EXIT
+
+# Install under a path that needs quoting, and use project directories whose
+# names aren't valid in tmux targets.
+PLUGIN="$TMP/it's #odd dir/tmux-agent-popup"
+PROJ="$TMP/my proj.nvim"
+OTHER="$TMP/other"
+mkdir -p "$PLUGIN" "$PROJ" "$OTHER"
+cp -R "$ROOT/agent-popup.tmux" "$ROOT/scripts" "$PLUGIN/"
+
+# Hostile globals the plugin has to override per session.
+cat >"$TMP/tmux.conf" <<'EOF'
+set -g default-shell /bin/sh
+set -g remain-on-exit on
+set -g detach-on-destroy off
+set -g @agent_popup_agents 'claude codex copilot broken'
+set -g @agent_popup_claude_cmd  'sleep 600'
+set -g @agent_popup_codex_cmd   'cat'
+set -g @agent_popup_copilot_cmd 'no-such-agent-binary --flag'
+set -g @agent_popup_broken_cmd  'false'
+set -g @agent_popup_broken_label 'Broken'
+set -g @agent_popup_root_key 'M-a'
+EOF
+t -f "$TMP/tmux.conf" new-session -d -s main -x 100 -y 30 -c "$PROJ"
+SOCKET="$(t display-message -p '#{socket_path}')"
+# Load the plugin the way TPM does: run the .tmux file with $TMUX pointing at
+# the server.
+TMUX="$SOCKET,$(t display-message -p '#{pid}'),0" "$PLUGIN/agent-popup.tmux"
+
+mkfifo "$TMP/ctl"
+"$PYTHON" "$ROOT/tests/pty_client.py" "$SOCK" "$TMP/ctl" &
+CPID=$!
+# Hold the FIFO open read-write, so typing never blocks if the client dies.
+exec 3<>"$TMP/ctl"
+
+# Powerline thin chevrons around menu and popup titles (U+E0B3, U+E0B1).
+# printf rather than $'\u...': macOS ships bash 3.2.
+L="$(printf '\356\202\263')" R="$(printf '\356\202\261')"
+
+failures=0
+pass() { printf '  ok    %s\n' "$1"; }
+fail() {
+  printf '  FAIL  %s\n' "$1"
+  failures=$((failures + 1))
+}
+
+# wait_for <command...>: poll until the command succeeds, up to 5 seconds.
+wait_for() {
+  for _ in $(seq 50); do
+    "$@" 2>/dev/null && return 0
+    sleep 0.1
+  done
+  return 1
+}
+# check <description> <command...>
+# A client that exits was detached, which ends the run: nothing after it can
+# pass.
+check() {
+  local desc="$1"
+  shift
+  if wait_for "$@"; then pass "$desc"; else fail "$desc"; fi
+  if ! kill -0 "$CPID" 2>/dev/null; then
+    echo "the test client exited (detached?); stopping"
+    exit 1
+  fi
+}
+# settle: for checks that something did NOT happen.
+settle() { sleep 0.7; }
+
+press() { printf '%s\n' "$1" >&3; }
+snap() {
+  rm -f "$TMP/snap"
+  printf '#snap %s\n' "$TMP/snap" >&3
+  wait_for test -f "$TMP/snap"
+}
+screen_has() { snap && grep -qF -- "$1" "$TMP/snap"; }
+
+session_for() { t list-sessions -F '#S' | grep "^agent-$1-" | head -n 1; }
+has_session() { [ -n "$(session_for "$1")" ]; }
+no_session() { ! has_session "$1"; }
+popup_on() { t list-clients -F '#{client_session}' | grep -q "^agent-$1-"; }
+no_popup() { ! t list-clients -F '#{client_session}' | grep -q '^agent-'; }
+main_attached() { t list-clients -F '#{client_session}' | grep -qx main; }
+sessions_named() { [ "$(t list-sessions -F '#S' | grep -c "^agent-$1-")" -eq "$2" ]; }
+# opt_is <agent> <option> <value> [-w]
+opt_is() { [ "$(t show-options ${4:+"$4"} -t "=$(session_for "$1"):" "$2")" = "$2 $3" ]; }
+in_dir() { [ "$(t display-message -p -t main: '#{pane_current_path}')" = "$1" ]; }
+no_view_mode() { [ "$(t display-message -p -t main: '#{pane_in_mode}')" = 0 ]; }
+
+wait_for main_attached || {
+  echo "client failed to attach" >&2
+  exit 1
+}
+
+echo "first use"
+press '\x02a'
+check 'prefix a with nothing running opens the menu' screen_has 'Agents'
+check 'the menu title has the chevrons' screen_has "$L Agents $R"
+check 'the menu lists every agent' screen_has 'Broken'
+press '1'
+check 'choosing Claude Code opens its popup' popup_on claude
+check 'the popup title has the chevrons' screen_has "$L Claude Code $R"
+check 'the session is named after the directory' has_session 'claude-my_proj_nvim'
+check 'status bar is off in the session' opt_is claude status off
+check 'detach-on-destroy is forced on' opt_is claude detach-on-destroy on
+check 'remain-on-exit is forced off' opt_is claude remain-on-exit off -w
+
+echo "toggle"
+press '\x02a'
+check 'prefix a inside the popup dismisses it' no_popup
+check 'the agent keeps running' has_session claude
+press '\x02a'
+check 'prefix a reopens the agent without the menu' popup_on claude
+check '... in the same session' sessions_named claude 1
+press '\x02d'
+check 'prefix d dismisses it too' no_popup
+
+echo "several agents"
+press '\x02A'
+check 'prefix A opens the menu' screen_has 'Agents'
+check 'running agents are marked' screen_has '● Claude Code'
+press '2'
+check 'choosing Codex opens it' popup_on codex
+press '\x02a'
+wait_for no_popup
+press '\x02a'
+check 'prefix a reopens the most recently used agent' popup_on codex
+press '\x04'
+check 'quitting the agent closes the popup' no_popup
+check '... and ends its session' no_session codex
+press '\x02a'
+check 'prefix a falls back to the remaining agent' popup_on claude
+press '\x02A'
+check 'prefix A inside the popup dismisses it' no_popup
+
+echo "root key"
+press '\x1ba'
+check 'M-a opens the popup' popup_on claude
+press '\x1ba'
+check 'M-a inside the popup dismisses it' no_popup
+
+echo "failures"
+press '\x02A'
+wait_for screen_has 'Agents'
+press '3'
+check 'a missing agent binary is reported' screen_has 'no-such-agent-binary not found'
+check '... and creates no session' no_session copilot
+press '\x02A'
+wait_for screen_has 'Agents'
+press '4'
+check 'an agent that exits at once is reported' screen_has 'Broken exited straight away'
+check '... and leaves no dead session behind' no_session broken
+t set-option -g remain-on-exit off
+press '\x02A'
+wait_for screen_has 'Agents'
+press '4'
+check '... also without a global remain-on-exit' screen_has 'Broken exited straight away'
+check '... again leaving no session' no_session broken
+t set-option -g remain-on-exit on
+check 'no script output lands in the pane' no_view_mode
+
+echo "agent session outside a popup"
+t switch-client -c "$(t list-clients -F '#{client_name}' | head -n 1)" -t "=$(session_for claude):"
+press '\x02a'
+check 'prefix a says so instead of detaching the terminal' screen_has 'already in an agent session'
+check 'the terminal stays attached' popup_on claude
+t switch-client -c "$(t list-clients -F '#{client_name}' | head -n 1)" -t '=main:'
+wait_for main_attached
+
+echo "another directory"
+t send-keys -t main: "cd '$OTHER'" Enter
+wait_for in_dir "$OTHER"
+press '\x02a'
+check 'prefix a in a new directory opens the menu' screen_has 'Agents'
+press '\x1b'
+settle
+check 'escape closes it without starting anything' sessions_named claude 1
+press '\x02a'
+wait_for screen_has 'Agents'
+press '1'
+check 'the new directory gets its own session' sessions_named claude 2
+
+echo
+if [ "$failures" -gt 0 ]; then
+  echo "$failures failed"
+  exit 1
+fi
+echo "all passed"
