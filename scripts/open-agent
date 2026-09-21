@@ -1,23 +1,17 @@
 #!/usr/bin/env bash
-# Open an agent for the directory of the pane a key was pressed in, in a popup
-# attached to that agent's own tmux session. Pressed from inside an agent
-# popup, it dismisses the popup instead; the agent keeps running.
+# Open an agent for the directory of a pane, in a popup attached to that
+# agent's own tmux session. Creates the session the first time.
 #
 #   open-agent <agent> <client> <pane>
 #
-# The key binding passes #{client_name} and #{pane_id}. Everything else is
-# looked up from those, so paths never go through shell quoting.
+# Callers pass #{client_name} and #{pane_id}. Everything else is looked up
+# from those, so paths never go through shell quoting.
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
 . "$DIR/helpers.sh"
 
 agent="$1" client="$2" pane="$3"
-
-if [ -n "$(tmux display-message -p -t "$pane" '#{@agent_popup_agent}')" ]; then
-  tmux detach-client -t "$client"
-  exit 0
-fi
 
 dir="$(tmux display-message -p -t "$pane" '#{pane_current_path}')"
 [ -n "$dir" ] || exit 0
@@ -42,19 +36,30 @@ fi
 # The last two override global settings that would keep the popup open after
 # the agent exits. set-option takes a pane target, so exact-match needs the
 # trailing colon: '=name' alone is "no such session".
+#
+# If the agent has already exited (e.g. on a bad flag), the session is gone
+# and set-option fails, or, under a global remain-on-exit, its pane is dead.
 target="=$session:"
-tmux set-option -t "$target" @agent_popup_agent "$agent" \; \
+label="$(agent_option "$agent" label)"
+if ! tmux set-option -t "$target" @agent_popup_agent "$agent" \; \
   set-option -t "$target" @agent_popup_path "$dir" \; \
   set-option -t "$target" status "$(get_option @agent_popup_status off)" \; \
   set-option -t "$target" detach-on-destroy on \; \
-  set-option -w -t "$target" remain-on-exit off
+  set-option -w -t "$target" remain-on-exit off 2>/dev/null ||
+  [ "$(tmux display-message -p -t "$target" '#{pane_dead}')" = 1 ]; then
+  tmux kill-session -t "=$session" 2>/dev/null
+  tmux display-message -c "$client" "agent-popup: $label exited straight away"
+  exit 0
+fi
 
-project="${dir##*/}"
-title=" $(agent_option "$agent" label) · ${project//\#/##} "
+# The banner: the agent's name between Powerline thin chevrons (U+E0B3 and
+# U+E0B1), as craftzdog's tmux-claude-hatch draws it. -T is a format, so a #
+# in a label has to be doubled.
+title=" ${label//\#/##} "
 
 tmux display-popup -c "$client" \
   -w "$(get_option @agent_popup_width 90%)" \
   -h "$(get_option @agent_popup_height 90%)" \
   -b "$(get_option @agent_popup_border rounded)" \
   -T "$title" \
-  -E "tmux attach-session -t '=$session'"
+  -E "exec tmux attach-session -t '=$session'"
