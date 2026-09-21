@@ -15,7 +15,8 @@ Inspired by [craftzdog/tmux-claude-hatch](https://github.com/craftzdog/tmux-clau
 - tmux 3.4 or newer
 - bash (the macOS system bash 3.2 is fine)
 - A Powerline or Nerd Font for the chevrons in the titles
-- [fzf](https://github.com/junegunn/fzf), for the session picker only
+- [fzf](https://github.com/junegunn/fzf), for the session picker only (0.46 or
+  newer for its j/k navigation)
 
 ## Install
 
@@ -25,7 +26,8 @@ With [TPM](https://github.com/tmux-plugins/tpm):
 set -g @plugin 'baliharko/tmux-agent-popup'
 ```
 
-Then press `prefix + I`.
+Then press `prefix + I` to install it. Later, `prefix + U` updates it to the
+latest version (both are TPM's own keys).
 
 Manually:
 
@@ -77,9 +79,10 @@ top, then agents in ordinary panes. The order doesn't change as agents start
 and stop working, so rows don't move under the cursor.
 
 `open` marks a session shown in a popup right now. `0:2.0` is the pane
-(session:window.pane) where an agent you started yourself is running; the
-picker finds those by process name, so a process named like one of
-`@agent_popup_agents` counts.
+(session:window.pane) where an agent you started yourself is running. The
+picker finds those by process name: a process named like one of the agents in
+`@agent_popup_agents`, or a node, bun, deno or python script of that name.
+An agent whose name differs from its program's isn't found this way.
 
 The picker opens in **nav** mode:
 
@@ -89,11 +92,11 @@ The picker opens in **nav** mode:
 | `l` / `enter`        | Open the agent: in the popup, or switch to its pane      |
 | `h` / `q` / `esc`    | Close the picker                                         |
 | `g` / `G`            | First / last agent                                       |
-| `/` or any other key | Search                                                   |
+| `/` or another letter | Search                                                  |
 | `ctrl-x`             | Kill it: the whole session, or just the agent in a pane  |
 
 In **search** mode every key types into the filter and `enter` opens the
-first match. `esc` goes back to nav mode and keeps the filter, so you can
+highlighted match. `esc` goes back to nav mode and keeps the filter, so you can
 move through the matches with `j` and `k`.
 
 Nav and search mode need fzf 0.46 or newer. With older fzf the picker is a
