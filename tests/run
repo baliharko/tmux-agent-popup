@@ -35,7 +35,7 @@ trap cleanup EXIT
 # Install under a path that needs quoting, and use project directories whose
 # names aren't valid in tmux targets.
 PLUGIN="$TMP/it's #odd dir/tmux-agent-popup"
-PROJ="$TMP/my proj.nvim"
+PROJ="$TMP/my proj:x.nvim" # ":" also separates fields in the scripts
 OTHER="$TMP/other"
 mkdir -p "$PLUGIN" "$PROJ" "$OTHER"
 cp -R "$ROOT/agent-popup.tmux" "$ROOT/scripts" "$PLUGIN/"
@@ -172,7 +172,7 @@ check 'the menu lists every agent' screen_has 'Broken'
 press '1'
 check 'choosing Claude Code opens its popup' popup_on claude
 check 'the popup title has the chevrons' screen_has "$L Claude Code $R"
-check 'the session is named after the directory' has_session 'claude-my_proj_nvim'
+check 'the session is named after the directory' has_session 'claude-my_proj_x_nvim'
 check 'status bar is off in the session' opt_is claude status off
 check 'detach-on-destroy is forced on' opt_is claude detach-on-destroy on
 check 'remain-on-exit is forced off' opt_is claude remain-on-exit off -w
@@ -259,17 +259,17 @@ echo "session picker"
 if ! command -v fzf >/dev/null 2>&1; then
   echo "  skipped: fzf is not installed"
 else
-  proj_session="$(t list-sessions -F '#S' | grep '^agent-claude-my_proj_nvim-')"
+  proj_session="$(t list-sessions -F '#S' | grep '^agent-claude-my_proj_x_nvim-')"
   press '\x02a'
   wait_for no_popup
   press '\x02u'
   check 'prefix u opens the picker' screen_has 'ctrl-x: kill'
   check 'the picker title has the chevrons' screen_has "$L Agents $R"
-  check 'it lists agents from every directory' screen_has 'my proj.nvim'
+  check 'it lists agents from every directory' screen_has 'my proj:x.nvim'
   check '... including the other one' screen_has 'other'
   check 'agents that went quiet are marked idle' screen_has '● idle'
   check 'the preview shows the agent screen' screen_has 'claude-standin-screen'
-  press "'proj.nvim" # exact match; fuzzy would also hit the long temp paths
+  press "'proj:x.nvim" # exact match; fuzzy would also hit the long temp paths
   sleep 0.3
   press '\r'
   check 'enter opens the chosen agent in the popup' attached_to "$proj_session"

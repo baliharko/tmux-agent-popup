@@ -65,20 +65,22 @@ is_working() {
 # Agents running in ordinary panes, outside the plugin's sessions. A pane
 # runs an agent when a process on its tty is named like one of the configured
 # agents; for node, bun, deno or python, the script's name counts. One line
-# per pane, fields separated by \037: agent, pane, pid, session:window.pane,
-# directory.
+# per pane, fields separated by ":" (see agent_sessions): agent, pane, pid,
+# session, window.pane, directory.
 loose_agents() {
   {
-    tmux list-panes -a -F "T$US#{pane_tty}$US#{pane_id}$US#{session_name}:#{window_index}.#{pane_index}$US#{@agent_popup_agent}$US#{pane_current_path}"
+    tmux list-panes -a -F 'T:#{pane_tty}:#{pane_id}:#{session_name}:#{window_index}.#{pane_index}:#{@agent_popup_agent}:#{pane_current_path}'
     ps -A -ww -o tty=,pid=,args=
-  } | awk -v us="$US" -v names="$(configured_agents | tr '\n' ' ')" '
+  } | awk -v names="$(configured_agents | tr '\n' ' ')" '
     BEGIN { n = split(names, list, " "); for (i = 1; i <= n; i++) known[list[i]] = 1 }
-    substr($0, 1, 2) == "T" us {
-      split($0, f, us)
-      if (f[5] != "") next # a pane in one of our sessions; listed as a session
+    substr($0, 1, 2) == "T:" {
+      split($0, f, ":")
+      if (f[6] != "") next # a pane in one of our sessions; listed as a session
       tty = f[2]
       sub(/^\/dev\//, "", tty)
-      pane[tty] = f[3]; where[tty] = f[4]; dir[tty] = f[6]
+      path = $0
+      for (i = 1; i <= 6; i++) sub(/^[^:]*:/, "", path)
+      pane[tty] = f[3]; where[tty] = f[4] ":" f[5]; dir[tty] = path
       next
     }
     !($1 in pane) || seen[$1] { next }
@@ -90,7 +92,7 @@ loose_agents() {
           if ($j !~ /^-/) { exe = $j; sub(/.*\//, "", exe); break }
       if (!(exe in known)) next
       seen[$1] = 1
-      print exe us pane[$1] us $2 us where[$1] us dir[$1]
+      print exe ":" pane[$1] ":" $2 ":" where[$1] ":" dir[$1]
     }'
 }
 
@@ -120,12 +122,14 @@ row() {
 list_rows() {
   local agent target pid last attached path where
   {
-    agent_sessions | while IFS="$US" read -r agent target last attached path; do
+    # read gives the last name the rest of the line, colons and all, so a
+    # directory containing ":" survives.
+    agent_sessions | while IFS=: read -r agent target last attached path; do
       if [ "$attached" -gt 0 ]; then where=open; else where=''; fi
-      row session "$target" '' "$agent" "$path" "$where" "${last:-1}"
+      row session "$target" '' "$agent" "$path" "$where" "$last"
     done
-    loose_agents | while IFS="$US" read -r agent target pid where path; do
-      row pane "$target" "$pid" "$agent" "$path" "$where" 0
+    loose_agents | while IFS=: read -r agent target pid session place path; do
+      row pane "$target" "$pid" "$agent" "$path" "$session:$place" 0
     done
   } | sort -t $'\t' -k1,1n -k2,2nr | cut -f3-
 }
