@@ -125,7 +125,15 @@ has_session() { [ -n "$(session_for "$1")" ]; }
 no_session() { ! has_session "$1"; }
 popup_on() { t list-clients -F '#{client_session}' | grep -q "^agent-$1-"; }
 attached_to() { t list-clients -F '#{client_session}' | grep -qx "$1"; }
-no_picker() { snap && ! grep -qF 'ctrl-x: kill' "$TMP/snap"; }
+# no_picker: the picker is off the screen and its process has exited. fzf
+# blanks the screen before the picker's script finishes, and a popup opened
+# while the previous one is still closing can come up without keyboard input,
+# so also give tmux a moment to take the old popup down.
+no_picker() {
+  snap && ! grep -qF 'ctrl-x: kill' "$TMP/snap" || return 1
+  ! pgrep -f "$PLUGIN/scripts/pick-session" >/dev/null || return 1
+  sleep 0.2
+}
 no_popup() { ! t list-clients -F '#{client_session}' | grep -q '^agent-'; }
 main_attached() { t list-clients -F '#{client_session}' | grep -qx main; }
 sessions_named() { [ "$(t list-sessions -F '#S' | grep -c "^agent-$1-")" -eq "$2" ]; }
