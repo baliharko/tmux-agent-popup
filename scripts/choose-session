@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Open the session picker (pick-session) in a popup: every running agent, in
-# any directory, including ones started by hand in ordinary panes. Inside an
-# agent popup it dismisses the popup instead, like the other keys.
+# any directory, including ones started by hand in ordinary panes. Pressed
+# inside an agent popup, it swaps that popup for the picker.
 #
 #   choose-session <client> <pane>
 set -u
@@ -11,11 +11,23 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 client="$1" pane="$2"
 
-leave_agent_session "$client" "$pane" && exit 0
-
 if ! command -v fzf >/dev/null 2>&1; then
   tmux display-message -c "$client" 'agent-popup: the session picker needs fzf'
   exit 0
+fi
+
+# Inside an agent popup: close it and open the picker on the client it was
+# shown on. display-popup -C closes it at once; a popup opened while another
+# is still closing can come up without keyboard input.
+if is_popup_client "$client"; then
+  host="$(tmux display-message -p -t "$pane" '#{@agent_popup_host}')"
+  if ! attached_client "$host"; then
+    # Opened by an older version, or its terminal is gone: just close it.
+    tmux detach-client -t "$client"
+    exit 0
+  fi
+  tmux display-popup -C -c "$host"
+  client="$host"
 fi
 if [ -z "$("$DIR/pick-session" --list)" ]; then
   tmux display-message -c "$client" 'agent-popup: no agents running'

@@ -5,6 +5,14 @@
 - The picker's preview redraws ten times a second instead of once, so an
   agent's output streams in as it types. The list still updates every
   second.
+- `prefix u` inside an agent popup goes straight to the picker instead of
+  only closing the popup.
+- The picker marks agents that need you as **waiting**: Claude Code's own
+  status (through `claude agents`, with jq), or a terminal bell rung since
+  you last looked at the agent. No notifications.
+- OpenCode is one of the built-in agents.
+- Fixed: Copilot was shown as idle while working; its hint reads "esc
+  interrupt", without "to".
 - Fixed: the picker could list a phantom agent for a dead pane (kept by
   `remain-on-exit`), whose old tty had been given to another program.
 

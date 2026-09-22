@@ -40,6 +40,18 @@ OTHER="$TMP/other"
 mkdir -p "$PLUGIN" "$PROJ" "$OTHER"
 cp -R "$ROOT/agent-popup.tmux" "$ROOT/scripts" "$PLUGIN/"
 
+# A stand-in for `claude agents --json`, which the picker asks for Claude
+# Code's own status: it prints whatever the test put in claude-agents.json.
+# First on PATH, so the tests never see the real Claude sessions running on
+# the machine.
+mkdir -p "$TMP/bin"
+cat >"$TMP/bin/claude" <<'EOF'
+#!/bin/sh
+cat "$(dirname "$0")/../claude-agents.json" 2>/dev/null || echo '[]'
+EOF
+chmod +x "$TMP/bin/claude"
+export PATH="$TMP/bin:$PATH"
+
 # Hostile globals the plugin has to override per session.
 cat >"$TMP/tmux.conf" <<'EOF'
 set -g default-shell /bin/sh
@@ -194,6 +206,13 @@ fzf_has_timer() {
   fzf --filter x --bind 'every(1):ignore' </dev/null >/dev/null 2>&1
   [ "$?" -ne 2 ]
 }
+# claude_says <session> <status>: Claude Code in <session> reports <status>.
+claude_says() {
+  printf '[{"pid": %s, "kind": "interactive", "status": "%s"}]\n' \
+    "$(t display-message -p -t "=$1:" '#{pane_pid}')" "$2" >"$TMP/claude-agents.json"
+}
+# ring_bell <session>: the agent in <session> rings the terminal bell.
+ring_bell() { printf '\a' >"$(t display-message -p -t "=$1:" '#{pane_tty}')"; }
 process_gone() { ! kill -0 "$1" 2>/dev/null; }
 window_is() { [ "$(t display-message -p -t main: '#{window_index}')" = "$1" ]; }
 wrapped_keys() { [ "$(t list-keys -T prefix | grep -c 'scripts/passthrough')" -eq "$1" ]; }
@@ -303,14 +322,29 @@ if ! command -v fzf >/dev/null 2>&1; then
   echo "  skipped: fzf is not installed"
 else
   proj_session="$(t list-sessions -F '#S' | grep '^agent-claude-my_proj_x_nvim-')"
+  other_session="$(t list-sessions -F '#S' | grep '^agent-claude-other-')"
   press '\x02a'
   wait_for no_popup
+  ring_bell "$proj_session"
+  claude_says "$other_session" waiting
   open_picker
   check 'prefix u opens the picker' screen_has 'ctrl-x: kill'
   check 'the picker title has the chevrons' screen_has "$L Agents $R"
   check 'it lists agents from every directory' screen_has 'my proj:x.nvim'
   check '... including the other one' screen_has 'other'
-  check 'agents that went quiet are marked idle' screen_has '● idle'
+  check 'an agent that rang the bell since you looked is marked waiting' \
+    screen_has '● waiting  Claude Code  my proj:x.nvim'
+  if command -v jq >/dev/null 2>&1; then
+    check 'Claude Code saying it waits for you is marked waiting' \
+      screen_has '● waiting  Claude Code  other'
+    claude_says "$other_session" busy
+    check '... working when it says it is busy' screen_has '● working  Claude Code  other'
+    claude_says "$other_session" idle
+    check '... and idle when it says so' screen_has '● idle     Claude Code  other'
+  else
+    echo "  skipped: Claude Code's own status needs jq"
+  fi
+  rm -f "$TMP/claude-agents.json"
   check 'the preview shows the agent screen' screen_has 'claude-standin-screen'
   press "'proj:x.nvim" # exact match; fuzzy would also hit the long temp paths
   sleep 0.3
@@ -319,6 +353,7 @@ else
   press '\x02a'
   check 'prefix a dismisses an agent opened from the picker' no_popup
   open_picker
+  check 'looking at an agent clears its bell' screen_has '● idle     Claude Code  my proj:x.nvim'
   press '\x18'
   check 'ctrl-x kills the highlighted agent' sessions_named claude 1
   check '... and the list reloads without it' screen_has 'ctrl-x: kill'
@@ -328,7 +363,10 @@ else
   press '\r'
   wait_for popup_on claude
   press '\x02u'
-  check 'prefix u inside an agent popup dismisses it' no_popup
+  check 'prefix u inside an agent popup swaps it for the picker' screen_has 'ctrl-x: kill'
+  check '... closing the agent popup' no_popup
+  press '\x03'
+  check '... and the picker takes keys' no_picker
   t kill-session -t "=$(session_for claude)"
   press '\x02u'
   check 'prefix u with no agents running says so' screen_has 'no agents running'
@@ -361,9 +399,9 @@ else
   wait_for no_picker
 
   echo "live updates"
-  # A stand-in agent that counts ten times a second and says it's working
-  # until the test creates $TMP/livebot.done; then it clears its screen and
-  # idles. The file, not a timer, decides, so a slow machine can't miss the
+  # A stand-in agent that counts ten times a second and says it's working,
+  # in Copilot's words, until the test creates $TMP/livebot.done; then it
+  # clears its screen and idles. The file, not a timer, decides, so a slow machine can't miss the
   # working phase. exec -a names the process like an agent.
   cat >"$TMP/livebot" <<'EOF'
 #!/bin/sh
@@ -375,7 +413,7 @@ while :; do
     idle=1
     printf '\033[2J\033[H'
   fi
-  if [ -z "$idle" ]; then echo "tick-$i (esc to interrupt)"; else echo "tick-$i"; fi
+  if [ -z "$idle" ]; then echo "tick-$i ◎ Working · esc interrupt"; else echo "tick-$i"; fi
   sleep 0.1
 done
 EOF

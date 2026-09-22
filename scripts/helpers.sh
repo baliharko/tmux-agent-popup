@@ -17,6 +17,7 @@ agent_default() {
   claude:label) printf 'Claude Code' ;;
   codex:label) printf 'Codex' ;;
   copilot:label) printf 'Copilot' ;;
+  opencode:label) printf 'OpenCode' ;;
   *:cmd | *:label) printf '%s' "$1" ;;
   esac
 }
@@ -32,7 +33,7 @@ agent_option() {
 # used in option and session names.
 configured_agents() {
   local agent
-  for agent in $(get_option @agent_popup_agents 'claude codex copilot'); do
+  for agent in $(get_option @agent_popup_agents 'claude codex copilot opencode'); do
     case "$agent" in
     *[!A-Za-z0-9_-]*) continue ;;
     esac
@@ -49,6 +50,12 @@ is_popup_client() {
   pids="$(tmux list-clients -F '#{client_name} #{client_pid} #{pid}' |
     awk -v c="$1" '$1 == c { print $2, $3 }')"
   [ -n "$pids" ] && [ "$(ps -o ppid= -p "${pids% *}" | tr -d ' ')" = "${pids#* }" ]
+}
+
+# attached_client <name>
+# True when a client of that name is attached right now.
+attached_client() {
+  [ -n "$1" ] && tmux list-clients -F '#{client_name}' | grep -qxF "$1"
 }
 
 # leave_agent_session <client> <pane>
@@ -68,11 +75,13 @@ leave_agent_session() {
 # agent_sessions
 # One line per agent session, fields separated by ":": agent, session, when
 # it was last attached (epoch seconds, 0 if never), how many clients are
-# attached, and its directory. The separator has to be printable: tmux 3.4
-# prints control characters in -F output as escapes like \037. Agent and
-# session names can't contain ":"; the directory can, so it comes last.
+# attached, the agent's tty, whether it rang the bell since it was last
+# looked at (1 or 0), and its directory. The separator has to be printable:
+# tmux 3.4 prints control characters in -F output as escapes like \037.
+# Agent and session names can't contain ":"; the directory can, so it comes
+# last.
 agent_sessions() {
-  tmux list-sessions -F '#{@agent_popup_agent}:#{session_name}:#{?session_last_attached,#{session_last_attached},0}:#{session_attached}:#{@agent_popup_path}' |
+  tmux list-sessions -F '#{@agent_popup_agent}:#{session_name}:#{?session_last_attached,#{session_last_attached},0}:#{session_attached}:#{pane_tty}:#{window_bell_flag}:#{@agent_popup_path}' |
     awk -F: '$1 != ""'
 }
 
@@ -81,7 +90,7 @@ agent_sessions() {
 dir_agents() {
   agent_sessions |
     AGENT_DIR="$1" awk -F: '
-      { dir = $0; for (i = 1; i <= 4; i++) sub(/^[^:]*:/, "", dir) }
+      { dir = $0; for (i = 1; i <= 6; i++) sub(/^[^:]*:/, "", dir) }
       dir == ENVIRON["AGENT_DIR"] { print $3 "\t" $1 }' |
     sort -rn | cut -f2
 }

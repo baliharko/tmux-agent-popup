@@ -2,8 +2,8 @@
 
 [![CI](https://github.com/baliharko/tmux-agent-popup/actions/workflows/ci.yml/badge.svg)](https://github.com/baliharko/tmux-agent-popup/actions/workflows/ci.yml)
 
-Open coding agents (Claude Code, Codex, GitHub Copilot CLI, or anything else
-you configure) in a large centered tmux popup.
+Open coding agents (Claude Code, Codex, GitHub Copilot CLI, OpenCode, or
+anything else you configure) in a large centered tmux popup.
 
 Each agent runs in its own tmux session per project directory. Hide the popup
 and the agent keeps working; bring it back and you're where you left off.
@@ -17,6 +17,8 @@ Inspired by [craftzdog/tmux-claude-hatch](https://github.com/craftzdog/tmux-clau
 - A Powerline or Nerd Font for the chevrons in the titles
 - [fzf](https://github.com/junegunn/fzf), for the session picker only (0.46 or
   newer for its j/k navigation)
+- [jq](https://jqlang.org), optional, for Claude Code's own status in the
+  picker
 
 ## Install
 
@@ -62,20 +64,29 @@ also hides the popup.
 
 `prefix u` lists every running agent with a live preview of its screen: the
 plugin's own sessions, and agents you started yourself in an ordinary pane.
+Pressed inside an agent popup, it swaps the popup for the picker.
 The preview redraws ten times a second, so you can watch an agent work; the
 list (and who's working) updates every second. On fzf versions without a
 timer (before `every()` was added), both update once a second.
 
 ```
-● idle     Claude Code  api                  open       ~/dev/api
+● waiting  Claude Code  api                  open       ~/dev/api
 ● working  Codex        web                  0:2.0      ~/dev/web
 ● idle     Copilot      dotfiles             0:0.0      ~/dotfiles
 ```
 
-An agent is **working** while the bottom of its screen offers to interrupt
-it ("esc to interrupt" or "esc to cancel"), as Claude Code and Codex do
-during a turn. The plugin's sessions come first, most recently opened at the
-top, then agents in ordinary panes. The order doesn't change as agents start
+- **waiting**: the agent needs you. Claude Code reports this itself when it
+  asks for permission or asks you a question (read through `claude agents`,
+  which needs jq). Any agent also shows as waiting if it rang the terminal
+  bell since you last looked at it; opening it clears that. Nothing else
+  happens: no notification, no sound, just the mark in the list.
+- **working**: Claude Code says it's busy, or the bottom of the agent's
+  screen offers to interrupt it ("esc to interrupt", "esc interrupt" or "esc
+  to cancel"), as Claude Code, Codex and Copilot do while they work.
+- **idle**: neither; typically finished and ready for your next prompt.
+
+The plugin's sessions come first, most recently opened at the top, then
+agents in ordinary panes. The order doesn't change as agents start
 and stop working, so rows don't move under the cursor.
 
 `open` marks a session shown in a popup right now. `0:2.0` is the pane
@@ -133,6 +144,7 @@ set -g @agent_popup_passthrough_keys '0 1 2 3 4 5 6 7 8 9 n p l w s ( ) h j k'
 set -g @agent_popup_claude_cmd  'claude'
 set -g @agent_popup_codex_cmd   'codex'
 set -g @agent_popup_copilot_cmd 'copilot'
+set -g @agent_popup_opencode_cmd 'opencode'
 ```
 
 `@agent_popup_root_key` binds the toggle without the prefix. The key is then
@@ -153,9 +165,9 @@ The border and menu colours follow tmux's own `popup-border-style`,
 List it in `@agent_popup_agents`. The menu shows agents in this order:
 
 ```tmux
-set -g @agent_popup_agents 'claude codex copilot opencode'
-set -g @agent_popup_opencode_cmd   'opencode'  # defaults to the agent name
-set -g @agent_popup_opencode_label 'OpenCode'  # menu and title; defaults to the name
+set -g @agent_popup_agents 'claude codex copilot opencode gemini'
+set -g @agent_popup_gemini_cmd   'gemini'  # defaults to the agent name
+set -g @agent_popup_gemini_label 'Gemini'  # menu and title; defaults to the name
 ```
 
 The same `_cmd` and `_label` options override the built-in agents.

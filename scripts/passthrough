@@ -20,7 +20,7 @@ if ! is_popup_client "$client"; then
   exit 0
 fi
 
-if [ -z "$host" ] || ! tmux list-clients -F '#{client_name}' | grep -qxF "$host"; then
+if ! attached_client "$host"; then
   # Opened by an older version, or its terminal is gone: just close it.
   tmux detach-client -t "$client"
   exit 0

@@ -66,12 +66,13 @@ fzf_has_timer() {
 
 # is_working <target>
 # True when the bottom of the agent's screen offers to interrupt it, as
-# Claude Code and Codex do only while they work ("esc to interrupt"). Only
-# the bottom lines count, so the conversation itself can't trigger it. Screen
-# activity won't do: Codex animates while it waits for input.
+# agents do only while they work: "esc to interrupt" (Claude Code, Codex),
+# "esc interrupt" (Copilot). Only the bottom lines count, so the conversation
+# itself can't trigger it. Screen activity won't do: Codex animates while it
+# waits for input.
 is_working() {
   tmux capture-pane -pt "$1" | awk 'NF' | tail -n 8 |
-    grep -qiE 'esc to (interrupt|cancel)'
+    grep -qiE 'esc (to )?(interrupt|cancel)'
 }
 
 # loose_agents
@@ -79,10 +80,10 @@ is_working() {
 # runs an agent when a process on its tty is named like one of the configured
 # agents; for node, bun, deno or python, the script's name counts. One line
 # per pane, fields separated by ":" (see agent_sessions): agent, pane, pid,
-# session, window.pane, directory.
+# session, window.pane, tty, bell (1 or 0), directory.
 loose_agents() {
   {
-    tmux list-panes -a -F 'T:#{pane_tty}:#{pane_id}:#{session_name}:#{window_index}.#{pane_index}:#{@agent_popup_agent}:#{pane_dead}:#{pane_current_path}'
+    tmux list-panes -a -F 'T:#{pane_tty}:#{pane_id}:#{session_name}:#{window_index}.#{pane_index}:#{@agent_popup_agent}:#{pane_dead}:#{window_bell_flag}:#{pane_current_path}'
     ps -A -ww -o tty=,pid=,args=
   } | awk -v names="$(configured_agents | tr '\n' ' ')" '
     BEGIN { n = split(names, list, " "); for (i = 1; i <= n; i++) known[list[i]] = 1 }
@@ -95,8 +96,8 @@ loose_agents() {
       tty = f[2]
       sub(/^\/dev\//, "", tty)
       path = $0
-      for (i = 1; i <= 7; i++) sub(/^[^:]*:/, "", path)
-      pane[tty] = f[3]; where[tty] = f[4] ":" f[5]; dir[tty] = path
+      for (i = 1; i <= 8; i++) sub(/^[^:]*:/, "", path)
+      pane[tty] = f[3]; where[tty] = f[4] ":" f[5]; bell[tty] = f[8]; dir[tty] = path
       next
     }
     !($1 in pane) || seen[$1] { next }
@@ -108,22 +109,67 @@ loose_agents() {
           if ($j !~ /^-/) { exe = $j; sub(/.*\//, "", exe); break }
       if (!(exe in known)) next
       seen[$1] = 1
-      print exe ":" pane[$1] ":" $2 ":" where[$1] ":" dir[$1]
+      print exe ":" pane[$1] ":" $2 ":" where[$1] ":" $1 ":" bell[$1] ":" dir[$1]
     }'
 }
 
-# row <kind> <target> <pid> <agent> <directory> <note> <recency>
+# claude_states
+# " <tty>=<status> ..." for running Claude Code sessions, as Claude itself
+# reports them through `claude agents --json`: busy, waiting (a permission
+# prompt or a question) or idle. Empty without claude or jq.
+claude_states() {
+  local agents pids
+  command -v claude >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
+  agents="$(claude agents --json 2>/dev/null |
+    jq -r '.[] | select(.kind == "interactive") | "\(.pid) \(.status)"' 2>/dev/null)"
+  [ -n "$agents" ] || return 0
+  pids="$(printf '%s\n' "$agents" | cut -d' ' -f1 | paste -sd, -)"
+  {
+    printf '%s\n' "$agents" | sed 's/^/A /'
+    ps -o pid=,tty= -p "$pids" | sed 's/^ */P /'
+  } | awk '$1 == "A" { st[$2] = $3; next } $1 == "P" && ($2 in st) { printf " %s=%s", $3, st[$2] }'
+  printf ' '
+}
+
+# agent_state <target> <tty> <bell>
+# working, waiting (needs you) or idle. Claude Code's own status wins where
+# there is one. Otherwise: working while it offers to interrupt, waiting if
+# it rang the bell since you last looked at it.
+agent_state() {
+  local tty="${2#/dev/}" status=''
+  case "$CLAUDE_STATES" in
+  *" $tty="*)
+    status="${CLAUDE_STATES#* "$tty"=}"
+    status="${status%% *}"
+    ;;
+  esac
+  case "$status" in
+  busy) echo working ;;
+  waiting | idle) echo "$status" ;;
+  *)
+    if is_working "$1"; then
+      echo working
+    elif [ "$3" = 1 ]; then
+      echo waiting
+    else
+      echo idle
+    fi
+    ;;
+  esac
+}
+
+# row <kind> <target> <pid> <agent> <directory> <note> <recency> <tty> <bell>
 # Prints sort keys, then the row. The order doesn't depend on status, so the
 # live reload never moves a row out from under the cursor: the plugin's
 # sessions, most recently opened first, then agents in ordinary panes.
 row() {
   local order status place
   if [ "$1" = session ]; then order=0; else order=1; fi
-  if is_working "$(target_of "$1" "$2")"; then
-    status=$'\033[33m●\033[0m working'
-  else
-    status=$'\033[32m●\033[0m idle   '
-  fi
+  case "$(agent_state "$(target_of "$1" "$2")" "$8" "$9")" in
+  working) status=$'\033[33m●\033[0m working' ;;
+  waiting) status=$'\033[1;31m●\033[0m \033[1mwaiting\033[0m' ;;
+  *) status=$'\033[32m●\033[0m idle   ' ;;
+  esac
   case "$5" in
   "$HOME" | "$HOME"/*) place="~${5#"$HOME"}" ;;
   *) place="$5" ;;
@@ -136,16 +182,17 @@ row() {
 }
 
 list_rows() {
-  local agent target pid last attached path where
+  local agent target pid last attached tty bell path where session place
+  CLAUDE_STATES="$(claude_states)"
   {
     # read gives the last name the rest of the line, colons and all, so a
     # directory containing ":" survives.
-    agent_sessions | while IFS=: read -r agent target last attached path; do
+    agent_sessions | while IFS=: read -r agent target last attached tty bell path; do
       if [ "$attached" -gt 0 ]; then where=open; else where=''; fi
-      row session "$target" '' "$agent" "$path" "$where" "$last"
+      row session "$target" '' "$agent" "$path" "$where" "$last" "$tty" "$bell"
     done
-    loose_agents | while IFS=: read -r agent target pid session place path; do
-      row pane "$target" "$pid" "$agent" "$path" "$session:$place" 0
+    loose_agents | while IFS=: read -r agent target pid session place tty bell path; do
+      row pane "$target" "$pid" "$agent" "$path" "$session:$place" 0 "$tty" "$bell"
     done
   } | sort -t $'\t' -k1,1n -k2,2nr | cut -f3-
 }
