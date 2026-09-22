@@ -415,11 +415,12 @@ else
   check 'the reopened picker gets keys' screen_has '> main'
   press '\x18'
   if ! check 'ctrl-x stops that agent' process_gone "$loose_pid"; then
-    echo "        processes on the agent's tty:"
-    ps -o pid=,ppid=,stat=,args= -t "$(t display-message -p -t "$loose_pane" '#{pane_tty}' | sed 's|^/dev/||')" |
-      sed 's/^/          /'
-    echo "        picker processes left:"
-    pgrep -fl "$PLUGIN/scripts/pick-session|fzf " | sed 's/^/          /'
+    echo "        the pane's process, its parent, and the picker's pid for the agent:"
+    ps -o pid=,ppid=,stat=,tty=,args= -p "$loose_pid" | sed 's/^/          /'
+    ps -o pid=,ppid=,stat=,args= -p "$(ps -o ppid= -p "$loose_pid" | tr -d ' ')" | sed 's/^/          /'
+    echo "          pane dead: $(t display-message -p -t "$loose_pane" '#{pane_dead}' 2>&1)"
+    echo "          picker row pid: $(TMUX="$SOCKET,$(t display-message -p '#{pid}'),0" \
+      "$PLUGIN/scripts/pick-session" --list | awk -F'\t' '$1 == "pane" { print $3 }')"
   fi
   press '\x03' # ctrl-c: typing "main" put the picker in search mode, where esc doesn't close it
   wait_for no_picker
