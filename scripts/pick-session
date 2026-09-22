@@ -6,6 +6,7 @@
 #
 #   pick-session                                 run the picker
 #   pick-session --list                          print the rows
+#   pick-session --any                           succeed if any agent runs
 #   pick-session --preview <kind> <target>       print an agent's screen
 #   pick-session --kill <kind> <target> <pid>    stop an agent
 #   pick-session --esc                           what esc does, for fzf
@@ -17,12 +18,44 @@
 set -u
 
 # The preview is redrawn ten times a second, so it's handled first, without
-# loading the helpers. Dropping the blank lines below the agent's output
-# makes fzf's follow show the end of it (the input box), not empty space.
+# loading the helpers. It keeps the agent's text colours but drops its
+# background colours: an agent that paints its own background would show as
+# patches of it over yours. Dropping the blank lines below the agent's
+# output makes fzf's follow show the end of it (the input box), not empty
+# space.
 if [ "${1:-}" = --preview ]; then
   if [ "$2" = session ]; then target="=$3:"; else target="$3"; fi
   tmux capture-pane -ept "$target" | awk '
-    { plain = $0; gsub(/\033\[[0-9;]*m/, "", plain) }
+    # nobg <SGR sequence>: the sequence without its background parameters.
+    # Colour parameters take arguments (38;5;n, 38;2;r;g;b), which must be
+    # skipped as a whole: the n in 38;5;44 is not a background.
+    function nobg(seq,   p, n, i, k, out) {
+      if (seq == "\033[m") return seq
+      n = split(substr(seq, 3, length(seq) - 3), p, ";")
+      out = ""
+      for (i = 1; i <= n; i++) {
+        k = 0
+        if (p[i] == "38" || p[i] == "48" || p[i] == "58")
+          k = (p[i + 1] == "5") ? 2 : (p[i + 1] == "2") ? 4 : 0
+        if (p[i] == "48" || p[i] ~ /^48:/ || p[i] ~ /^(4[0-79]|10[0-7])$/) {
+          i += k
+          continue
+        }
+        for (; k >= 0; k--) out = out (out == "" ? "" : ";") p[i++]
+        i--
+      }
+      return out == "" ? "" : "\033[" out "m"
+    }
+    {
+      line = ""
+      while (match($0, /\033\[[0-9;:]*m/)) {
+        line = line substr($0, 1, RSTART - 1) nobg(substr($0, RSTART, RLENGTH))
+        $0 = substr($0, RSTART + RLENGTH)
+      }
+      $0 = line $0
+      plain = $0
+      gsub(/\033\[[0-9;:]*m/, "", plain)
+    }
     plain ~ /^[[:space:]]*$/ { blank = blank $0 "\n"; next }
     { printf "%s%s\n", blank, $0; blank = "" }'
   exit 0
@@ -131,10 +164,10 @@ claude_states() {
   printf ' '
 }
 
-# agent_state <target> <tty> <bell>
+# agent_state <screen> <tty> <bell>
 # working, waiting (needs you) or idle. Claude Code's own status wins where
-# there is one. Otherwise: working while it offers to interrupt, waiting if
-# it rang the bell since you last looked at it.
+# there is one. Otherwise: working while its screen offers to interrupt it
+# (<screen> is "working"), waiting if it rang the bell since you last looked.
 agent_state() {
   local tty="${2#/dev/}" status=''
   case "$CLAUDE_STATES" in
@@ -147,7 +180,7 @@ agent_state() {
   busy) echo working ;;
   waiting | idle) echo "$status" ;;
   *)
-    if is_working "$1"; then
+    if [ "$1" = working ]; then
       echo working
     elif [ "$3" = 1 ]; then
       echo waiting
@@ -158,43 +191,71 @@ agent_state() {
   esac
 }
 
-# row <kind> <target> <pid> <agent> <directory> <note> <recency> <tty> <bell>
-# Prints sort keys, then the row. The order doesn't depend on status, so the
-# live reload never moves a row out from under the cursor: the plugin's
-# sessions, most recently opened first, then agents in ordinary panes.
-row() {
-  local order status place
-  if [ "$1" = session ]; then order=0; else order=1; fi
-  case "$(agent_state "$(target_of "$1" "$2")" "$8" "$9")" in
-  working) status=$'\033[33m●\033[0m working' ;;
-  waiting) status=$'\033[1;31m●\033[0m \033[1mwaiting\033[0m' ;;
-  *) status=$'\033[32m●\033[0m idle   ' ;;
-  esac
-  case "$5" in
-  "$HOME" | "$HOME"/*) place="~${5#"$HOME"}" ;;
-  *) place="$5" ;;
-  esac
-  # The note ("open", or where a hand-started agent runs) goes before the
-  # path, which fzf cuts off first when the line is too long.
-  printf '%s\t%s\t%s\t%s\t%s\t%s  %-12s \033[1m%-20s\033[0m %-10s \033[2m%s\033[0m\n' \
-    "$order" "$7" "$1" "$2" "$3" \
-    "$status" "$(agent_option "$4" label)" "${5##*/}" "$6" "$place"
+# record <order> <recency> <kind> <target> <pid> <agent> <tty> <bell> <note> <directory>
+# One agent's row data, with everything that takes a tmux call looked up:
+# its label and whether its screen says it's working. Fields are separated
+# by \037, the directory last.
+record() {
+  local screen=idle
+  is_working "$(target_of "$3" "$4")" && screen=working
+  printf '%s\037' "$1" "$2" "$3" "$4" "$5" "$(agent_option "$6" label)" "$screen" "$7" "$8" "$9"
+  printf '%s\n' "${10}"
 }
 
-list_rows() {
+# gather_rows: a record per agent: the plugin's sessions, then agents in
+# ordinary panes.
+gather_rows() {
   local agent target pid last attached tty bell path where session place
-  CLAUDE_STATES="$(claude_states)"
-  {
-    # read gives the last name the rest of the line, colons and all, so a
-    # directory containing ":" survives.
-    agent_sessions | while IFS=: read -r agent target last attached tty bell path; do
-      if [ "$attached" -gt 0 ]; then where=open; else where=''; fi
-      row session "$target" '' "$agent" "$path" "$where" "$last" "$tty" "$bell"
-    done
-    loose_agents | while IFS=: read -r agent target pid session place tty bell path; do
-      row pane "$target" "$pid" "$agent" "$path" "$session:$place" 0 "$tty" "$bell"
-    done
-  } | sort -t $'\t' -k1,1n -k2,2nr | cut -f3-
+  # read gives the last name the rest of the line, colons and all, so a
+  # directory containing ":" survives.
+  agent_sessions | while IFS=: read -r agent target last attached tty bell path; do
+    if [ "$attached" -gt 0 ]; then where=open; else where=''; fi
+    record 0 "$last" session "$target" '' "$agent" "$tty" "$bell" "$where" "$path"
+  done
+  loose_agents | while IFS=: read -r agent target pid session place tty bell path; do
+    record 1 0 pane "$target" "$pid" "$agent" "$tty" "$bell" "$session:$place" "$path"
+  done
+}
+
+# list_rows [quick]: the picker's rows. The order doesn't depend on status,
+# so the live reload never moves a row out from under the cursor: the
+# plugin's sessions, most recently opened first, then agents in ordinary
+# panes. quick leaves out Claude Code's own status, the slowest part, for
+# the first list the picker shows; the full one replaces it right after.
+list_rows() {
+  local states claude records order recency kind target pid label screen tty bell note dir status place
+  CLAUDE_STATES=''
+  if [ "${1:-}" = quick ]; then
+    records="$(gather_rows)"
+  else
+    # `claude agents` takes about as long as everything else put together,
+    # so it runs while the rest is gathered.
+    states="$(mktemp)"
+    claude_states >"$states" &
+    claude=$!
+    records="$(gather_rows)"
+    wait "$claude"
+    CLAUDE_STATES="$(cat "$states")"
+    rm -f "$states"
+  fi
+  [ -n "$records" ] || return 0
+  printf '%s\n' "$records" |
+    while IFS=$'\037' read -r order recency kind target pid label screen tty bell note dir; do
+      case "$(agent_state "$screen" "$tty" "$bell")" in
+      working) status=$'\033[33m●\033[0m working' ;;
+      waiting) status=$'\033[1;31m●\033[0m \033[1mwaiting\033[0m' ;;
+      *) status=$'\033[32m●\033[0m idle   ' ;;
+      esac
+      case "$dir" in
+      "$HOME" | "$HOME"/*) place="~${dir#"$HOME"}" ;;
+      *) place="$dir" ;;
+      esac
+      # The note ("open", or where a hand-started agent runs) goes before
+      # the path, which fzf cuts off first when the line is too long.
+      printf '%s\t%s\t%s\t%s\t%s\t%s  %-12s \033[1m%-20s\033[0m %-10s \033[2m%s\033[0m\n' \
+        "$order" "$recency" "$kind" "$target" "$pid" \
+        "$status" "$label" "${dir##*/}" "$note" "$place"
+    done | sort -t $'\t' -k1,1n -k2,2nr | cut -f3-
 }
 
 # target_of <kind> <target>: a tmux target for the agent's pane.
@@ -206,6 +267,11 @@ case "${1:-}" in
 --list)
   list_rows
   exit 0
+  ;;
+--any)
+  # Whether any agent runs at all, without the statuses: for choose-session.
+  [ -n "$(agent_sessions)" ] || [ -n "$(loose_agents)" ]
+  exit
   ;;
 --esc)
   # From search back to nav; from nav, close the picker.
@@ -242,7 +308,8 @@ opts=(--ansi --no-sort --reverse --cycle --delimiter $'\t' --with-nth 4
 # shellcheck disable=SC2016 # expanded by fzf's shell
 if fzf_has_timer; then
   opts+=(--bind 'every(0.1):refresh-preview'
-    --bind 'every(1):reload-sync("$AGENT_POPUP_PICKER" --list)')
+    --bind 'every(1):reload-sync("$AGENT_POPUP_PICKER" --list)'
+    --bind 'load:unbind(load)+reload-sync("$AGENT_POPUP_PICKER" --list)')
 else
   opts+=(--bind 'load:reload-sync(sleep 1; "$AGENT_POPUP_PICKER" --list)+refresh-preview')
 fi
@@ -255,7 +322,7 @@ if fzf_at_least 0 46; then
 else
   opts+=(--header 'enter: open · ctrl-x: kill')
 fi
-selected="$(list_rows | fzf "${opts[@]}")"
+selected="$(list_rows quick | fzf "${opts[@]}")"
 [ -n "$selected" ] || exit 0
 
 kind="${selected%%$'\t'*}"

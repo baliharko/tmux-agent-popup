@@ -11,6 +11,11 @@
   status (through `claude agents`, with jq), or a terminal bell rung since
   you last looked at the agent. No notifications.
 - OpenCode is one of the built-in agents.
+- The picker opens about three times faster: it no longer builds the list
+  twice, asks Claude Code for its status in parallel, and shows the list
+  before Claude's status is in.
+- The preview drops the agents' background colours, so an agent that paints
+  its own background (OpenCode) doesn't look patchy over yours.
 - Fixed: Copilot was shown as idle while working; its hint reads "esc
   interrupt", without "to".
 - Fixed: the picker could list a phantom agent for a dead pane (kept by

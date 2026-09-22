@@ -211,6 +211,28 @@ claude_says() {
   printf '[{"pid": %s, "kind": "interactive", "status": "%s"}]\n' \
     "$(t display-message -p -t "=$1:" '#{pane_pid}')" "$2" >"$TMP/claude-agents.json"
 }
+# preview_of <session>: what the picker's preview shows for it.
+preview_of() {
+  TMUX="$SOCKET,$(t display-message -p '#{pid}'),0" "$PLUGIN/scripts/pick-session" --preview session "$1"
+}
+# no_background_in_preview <session>: the preview keeps the agent's text
+# colours but none of its background colours. The colour codes are parsed,
+# since a text colour's arguments look like background codes (38;5;44).
+no_background_in_preview() {
+  preview_of "$1" | "$PYTHON" -c '
+import re, sys
+fg = bg = 0
+for m in re.finditer(r"\x1b\[([0-9;:]*)m", sys.stdin.read()):
+    p, i = m.group(1).split(";"), 0
+    while i < len(p):
+        if p[i] in ("38", "48") and i + 1 < len(p):
+            fg += p[i] == "38"; bg += p[i] == "48"
+            i += {"5": 3, "2": 5}.get(p[i + 1], 1)
+            continue
+        bg += bool(re.fullmatch(r"4[0-79]|10[0-7]|48:.*", p[i]))
+        i += 1
+sys.exit(0 if fg and not bg else 1)'
+}
 # ring_bell <session>: the agent in <session> rings the terminal bell.
 ring_bell() { printf '\a' >"$(t display-message -p -t "=$1:" '#{pane_tty}')"; }
 process_gone() { ! kill -0 "$1" 2>/dev/null; }
@@ -346,6 +368,10 @@ else
   fi
   rm -f "$TMP/claude-agents.json"
   check 'the preview shows the agent screen' screen_has 'claude-standin-screen'
+  # Text in a colour whose code contains 44 (also a background code), on a
+  # background of its own, as agents with their own theme draw.
+  printf '\033[38;5;44;48;2;11;14;20mpainted\033[0m\n' >"$(t display-message -p -t "=$proj_session:" '#{pane_tty}')"
+  check "the preview keeps an agent's text colours, not its background" no_background_in_preview "$proj_session"
   press "'proj:x.nvim" # exact match; fuzzy would also hit the long temp paths
   sleep 0.3
   press '\r'

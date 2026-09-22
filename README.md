@@ -66,7 +66,9 @@ also hides the popup.
 plugin's own sessions, and agents you started yourself in an ordinary pane.
 Pressed inside an agent popup, it swaps the popup for the picker.
 The preview redraws ten times a second, so you can watch an agent work; the
-list (and who's working) updates every second. On fzf versions without a
+list (and who's working) updates every second. The preview keeps the agent's
+text colours but shows them on your own background, so agents that paint
+their own (OpenCode, for one) don't come out patchy. On fzf versions without a
 timer (before `every()` was added), both update once a second.
 
 ```

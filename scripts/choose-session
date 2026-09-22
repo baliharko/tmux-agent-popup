@@ -29,7 +29,7 @@ if is_popup_client "$client"; then
   tmux display-popup -C -c "$host"
   client="$host"
 fi
-if [ -z "$("$DIR/pick-session" --list)" ]; then
+if ! "$DIR/pick-session" --any; then
   tmux display-message -c "$client" 'agent-popup: no agents running'
   exit 0
 fi
