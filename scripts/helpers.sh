@@ -95,6 +95,35 @@ dir_agents() {
     sort -rn | cut -f2
 }
 
+# terminal_colours <client>
+# The default colours of <client>'s terminal as a tmux style, e.g.
+# "fg=#dcd7ba,bg=#1f1f28", or nothing if the terminal doesn't say. Learned
+# by probe-colours (next to this file) in a background window of the
+# client's session, and cached in @agent_popup_colours until the plugin is
+# loaded again. The window's status-line entry is made blank in the same
+# command that creates it, so it never shows.
+terminal_colours() {
+  local style session
+  style="$(tmux show-option -gqv @agent_popup_colours)"
+  if [ -z "$style" ]; then
+    session="$(tmux list-clients -F '#{client_name} #{client_session}' |
+      awk -v c="$1" '$1 == c { print $2; exit }')"
+    [ -n "$session" ] || return 0
+    # shellcheck disable=SC2016 # expanded by the window's shell
+    tmux new-window -d -t "=$session:" -n agent-popup-probe \
+      -e "AGENT_POPUP_PROBE=$(dirname "${BASH_SOURCE[0]}")/probe-colours" \
+      'exec "$AGENT_POPUP_PROBE"' \; \
+      set-option -w -t "=${session}:agent-popup-probe" window-status-format '' \; \
+      set-option -w -t "=${session}:agent-popup-probe" window-status-current-format ''
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+      style="$(tmux show-option -gqv @agent_popup_colours)"
+      [ -n "$style" ] && break
+      sleep 0.05
+    done
+  fi
+  [ "$style" = none ] || printf '%s' "$style"
+}
+
 # titled <text>
 # A popup or menu title: <text> between Powerline thin chevrons (U+E0B3 and
 # U+E0B1), as craftzdog's tmux-claude-hatch draws them. Titles are formats,

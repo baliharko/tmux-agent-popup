@@ -25,6 +25,10 @@ esac
 # with #{q:}, so the install path can contain spaces, quotes or #.
 tmux set-option -g @agent_popup_dir "$DIR"
 
+# Forget the terminal's colours (scripts/probe-colours), so that reloading
+# the config picks up a new terminal theme.
+tmux set-option -gu @agent_popup_colours
+
 # bind_script <table> <key> <script>
 bind_script() {
   tmux bind-key -T "$1" "$2" \

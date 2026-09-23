@@ -16,6 +16,9 @@
   before Claude's status is in.
 - The preview drops the agents' background colours, so an agent that paints
   its own background (OpenCode) doesn't look patchy over yours.
+- Fixed: agents in the popup looked flat. They ask the terminal for its
+  colours to shade their screens, which nothing answered in a popup; the
+  plugin now learns the terminal's colours and hands them to agent panes.
 - Fixed: Copilot was shown as idle while working; its hint reads "esc
   interrupt", without "to".
 - Fixed: the picker could list a phantom agent for a dead pane (kept by

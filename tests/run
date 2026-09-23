@@ -57,7 +57,7 @@ cat >"$TMP/tmux.conf" <<'EOF'
 set -g default-shell /bin/sh
 set -g remain-on-exit on
 set -g detach-on-destroy off
-set -g @agent_popup_agents 'claude codex copilot broken'
+set -g @agent_popup_agents 'claude codex copilot broken shade'
 set -g @agent_popup_claude_cmd  'sh -c "echo claude-standin-screen; exec sleep 600"'
 set -g @agent_popup_codex_cmd   'cat'
 set -g @agent_popup_copilot_cmd 'no-such-agent-binary --flag'
@@ -68,6 +68,20 @@ bind k select-window -t :=5 \; display-message 'custom k'
 EOF
 t -f "$TMP/tmux.conf" new-session -d -s main -x 100 -y 30 -c "$PROJ"
 SOCKET="$(t display-message -p '#{socket_path}')"
+
+# A stand-in agent that, like Codex or OpenCode, asks the terminal for its
+# background colour when it starts, and records the answer.
+cat >"$TMP/shade" <<'EOF'
+#!/bin/sh
+old="$(stty -g)"
+stty raw -echo min 0 time 10
+printf '\033]11;?\033\\'
+dd bs=256 count=1 2>/dev/null >"$(dirname "$0")/shade.reply"
+stty "$old"
+exec sleep 600
+EOF
+chmod +x "$TMP/shade"
+t set -g @agent_popup_shade_cmd "$TMP/shade"
 # Load the plugin the way TPM does: run the .tmux file with $TMUX pointing at
 # the server.
 load_plugin() { TMUX="$SOCKET,$(t display-message -p '#{pid}'),0" "$PLUGIN/agent-popup.tmux"; }
@@ -166,7 +180,10 @@ main_attached() { t list-clients -F '#{client_session}' | grep -qx main; }
 sessions_named() { [ "$(t list-sessions -F '#S' | grep -c "^agent-$1-")" -eq "$2" ]; }
 # opt_is <agent> <option> <value> [-w]
 opt_is() { [ "$(t show-options ${4:+"$4"} -t "=$(session_for "$1"):" "$2")" = "$2 $3" ]; }
-client_pane_is() { [ "$(t display-message -p -c "$(t list-clients -F '#{client_name}' | head -n 1)" '#{pane_id}')" = "$1" ]; }
+# client_pane_is <pane>: the terminal is showing <pane>. Read from list-clients,
+# where #{pane_id} is each client's own pane; display-message -c would give
+# the pane of whichever session was active last.
+client_pane_is() { [ "$(t list-clients -F '#{pane_id}' | head -n 1)" = "$1" ]; }
 # The highest tick-N on screen: livebot's counter, as the preview shows it.
 max_tick() { snap && grep -oE 'tick-[0-9]+' "$TMP/snap" | sed 's/tick-//' | sort -n | tail -n 1; }
 ticks_past() { [ "$(max_tick)" -gt "$1" ]; }
@@ -235,6 +252,8 @@ sys.exit(0 if fg and not bg else 1)'
 }
 # ring_bell <session>: the agent in <session> rings the terminal bell.
 ring_bell() { printf '\a' >"$(t display-message -p -t "=$1:" '#{pane_tty}')"; }
+colours_cached() { [ "$(t show-options -gv @agent_popup_colours)" = "$1" ]; }
+windows_in_main() { [ "$(t list-windows -t main | wc -l | tr -d ' ')" = "$1" ]; }
 process_gone() { ! kill -0 "$1" 2>/dev/null; }
 window_is() { [ "$(t display-message -p -t main: '#{window_index}')" = "$1" ]; }
 wrapped_keys() { [ "$(t list-keys -T prefix | grep -c 'scripts/passthrough')" -eq "$1" ]; }
@@ -260,6 +279,22 @@ check 'the session is named after the directory' has_session 'claude-my_proj_x_n
 check 'status bar is off in the session' opt_is claude status off
 check 'detach-on-destroy is forced on' opt_is claude detach-on-destroy on
 check 'remain-on-exit is forced off' opt_is claude remain-on-exit off -w
+
+echo "terminal colours"
+check "the terminal's colours are learned once and cached" colours_cached 'fg=#dcd7ba,bg=#1f1f28'
+check '... by a window that closes itself' windows_in_main 1
+press '\x02a' # put away Claude Code's popup from above
+wait_for no_popup
+press '\x02A'
+wait_for screen_has 'Agents'
+press '5'
+check 'an agent asking for the background gets the real terminal colour' \
+  grep -q 'rgb:1f1f/1f1f/2828' "$TMP/shade.reply"
+press '\x02a'
+wait_for no_popup
+t kill-session -t "=$(session_for shade)"
+press '\x02a' # and bring Claude Code back for the next section
+wait_for popup_on claude
 
 echo "toggle"
 press '\x02a'

@@ -176,6 +176,13 @@ The same `_cmd` and `_label` options override the built-in agents.
 
 ## Notes
 
+- Agents ask the terminal for its colours to shade their screens, and in a
+  popup the terminal can't answer. So the plugin learns your terminal's
+  colours once, with a short-lived background window whose status-line entry
+  is blank, and gives them to each new agent's pane; agents then look the
+  same as in an ordinary pane. Reloading the config learns them again, e.g.
+  after changing your terminal's theme. Agents already running keep the
+  colours they started with.
 - Agent sessions are named `agent-<agent>-<directory>-<hash>` and appear in
   `prefix s` like any other session. If you switch to one there, `prefix a`
   won't detach your terminal; switch back with `prefix s` or `prefix (`.
