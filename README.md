@@ -78,12 +78,15 @@ timer (before `every()` was added), both update once a second.
 
 - **waiting**: the agent needs you. Claude Code reports this itself when it
   asks for permission or asks you a question (read through `claude agents`,
-  which needs jq). Any agent also shows as waiting if it rang the terminal
-  bell since you last looked at it; opening it clears that. Nothing else
-  happens: no notification, no sound, just the mark in the list.
+  which needs jq). Other agents are waiting while the bottom of their screen
+  shows a prompt that esc cancels ("esc to cancel"), as Copilot's and
+  Codex's approvals and questions do. Any agent also shows as waiting if it
+  rang the terminal bell since you last looked at it; opening it clears
+  that. Nothing else happens: no notification, no sound, just the mark in
+  the list.
 - **working**: Claude Code says it's busy, or the bottom of the agent's
-  screen offers to interrupt it ("esc to interrupt", "esc interrupt" or "esc
-  to cancel"), as Claude Code, Codex and Copilot do while they work.
+  screen offers to interrupt it ("esc to interrupt" or "esc interrupt"), as
+  Claude Code, Codex and Copilot do while they work.
 - **idle**: neither; typically finished and ready for your next prompt.
 
 The plugin's sessions come first, most recently opened at the top, then

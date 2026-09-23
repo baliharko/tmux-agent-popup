@@ -88,15 +88,27 @@ fzf_has_timer() {
   [ "$?" -ne 2 ]
 }
 
-# is_working <target>
-# True when the bottom of the agent's screen offers to interrupt it, as
-# agents do only while they work: "esc to interrupt" (Claude Code, Codex),
-# "esc interrupt" (Copilot). Only the bottom lines count, so the conversation
-# itself can't trigger it. Screen activity won't do: Codex animates while it
-# waits for input.
-is_working() {
-  tmux capture-pane -pt "$1" | awk 'NF' | tail -n 8 |
-    grep -qiE 'esc (to )?(interrupt|cancel)'
+# screen_state <target>
+# What the bottom of the agent's screen says. waiting: it shows a prompt
+# that esc cancels, as agents do when they ask for approval or ask you a
+# question: "esc to cancel" (Copilot, Codex). This comes first: Copilot's
+# prompt replaces its "esc interrupt" line, but an agent may keep both.
+# working: it offers to interrupt the agent, as agents do only while they
+# work: "esc to interrupt" (Claude Code, Codex), "esc interrupt" (Copilot).
+# idle otherwise. Only the bottom lines count, so the conversation itself
+# can't trigger it. Screen activity won't do: Codex animates while it waits
+# for input.
+screen_state() {
+  tmux capture-pane -pt "$1" | awk '
+    NF { row[++n] = tolower($0) }
+    END {
+      state = "idle"
+      for (i = (n > 8 ? n - 7 : 1); i <= n; i++) {
+        if (row[i] ~ /esc (to )?cancel/) { state = "waiting"; break }
+        if (row[i] ~ /esc (to )?interrupt/) state = "working"
+      }
+      print state
+    }'
 }
 
 # loose_agents
@@ -157,8 +169,8 @@ claude_states() {
 
 # agent_state <screen> <tty> <bell>
 # working, waiting (needs you) or idle. Claude Code's own status wins where
-# there is one. Otherwise: working while its screen offers to interrupt it
-# (<screen> is "working"), waiting if it rang the bell since you last looked.
+# there is one. Otherwise what its screen says (<screen>, from
+# screen_state), or waiting if it rang the bell since you last looked.
 agent_state() {
   local tty="${2#/dev/}" status=''
   case "$CLAUDE_STATES" in
@@ -171,8 +183,8 @@ agent_state() {
   busy) echo working ;;
   waiting | idle) echo "$status" ;;
   *)
-    if [ "$1" = working ]; then
-      echo working
+    if [ "$1" != idle ]; then
+      echo "$1"
     elif [ "$3" = 1 ]; then
       echo waiting
     else
@@ -184,11 +196,11 @@ agent_state() {
 
 # record <order> <recency> <kind> <target> <pid> <agent> <tty> <bell> <note> <directory>
 # One agent's row data, with everything that takes a tmux call looked up:
-# its label and whether its screen says it's working. Fields are separated
+# its label and what its screen says (screen_state). Fields are separated
 # by \037, the directory last.
 record() {
-  local screen=idle
-  is_working "$(target_of "$3" "$4")" && screen=working
+  local screen
+  screen="$(screen_state "$(target_of "$3" "$4")")"
   printf '%s\037' "$1" "$2" "$3" "$4" "$5" "$(agent_option "$6" label)" "$screen" "$7" "$8" "$9"
   printf '%s\n' "${10}"
 }

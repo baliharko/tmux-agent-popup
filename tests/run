@@ -520,20 +520,30 @@ else
 
   echo "live updates"
   # A stand-in agent that counts ten times a second and says it's working,
-  # in Copilot's words, until the test creates $TMP/livebot.done; then it
-  # clears its screen and idles. The file, not a timer, decides, so a slow machine can't miss the
-  # working phase. exec -a names the process like an agent.
+  # in Copilot's words, until the test creates $TMP/livebot.ask; then it
+  # clears its screen and asks for approval, as Copilot does, until the test
+  # creates $TMP/livebot.done; then it clears its screen and idles. The
+  # files, not timers, decide, so a slow machine can't miss a phase. exec -a
+  # names the process like an agent.
   cat >"$TMP/livebot" <<'EOF'
 #!/bin/sh
-done_file="$(dirname "$0")/livebot.done"
-i=0 idle=''
+dir="$(dirname "$0")"
+i=0 phase=working
 while :; do
   i=$((i + 1))
-  if [ -z "$idle" ] && [ -e "$done_file" ]; then
-    idle=1
+  if [ "$phase" = working ] && [ -e "$dir/livebot.ask" ]; then
+    phase=asking
     printf '\033[2J\033[H'
   fi
-  if [ -z "$idle" ]; then echo "tick-$i ◎ Working · esc interrupt"; else echo "tick-$i"; fi
+  if [ "$phase" = asking ] && [ -e "$dir/livebot.done" ]; then
+    phase=idle
+    printf '\033[2J\033[H'
+  fi
+  case "$phase" in
+  working) echo "tick-$i ◎ Working · esc interrupt" ;;
+  asking) echo "tick-$i ↑↓ to navigate · enter to select · esc to cancel" ;;
+  *) echo "tick-$i" ;;
+  esac
   sleep 0.1
 done
 EOF
@@ -541,6 +551,8 @@ EOF
   livebot_pane="$(t list-panes -t main:3 -F '#{pane_id}')"
   open_picker
   check 'a working agent is marked working' screen_has '● working  Copilot'
+  touch "$TMP/livebot.ask"
+  check '... waiting while it asks for approval' screen_has '● waiting  Copilot'
   touch "$TMP/livebot.done"
   check '... and idle once it stops, while the picker stays open' screen_has '● idle     Copilot'
   first_tick="$(max_tick)"

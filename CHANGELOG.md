@@ -31,6 +31,10 @@
   put its scroll position over the end of the first row.
 - Fixed: Copilot was shown as idle while working; its hint reads "esc
   interrupt", without "to".
+- Fixed: Copilot and Codex were shown as working while they asked for your
+  approval or asked you a question: the "esc to cancel" under the prompt
+  counted as offering to interrupt them. A prompt like that now marks them
+  waiting, in red.
 - Fixed: the picker could list a phantom agent for a dead pane (kept by
   `remain-on-exit`), whose old tty had been given to another program.
 - Fixed: `ctrl-x` in the picker could leave an agent running with no window
