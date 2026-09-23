@@ -32,6 +32,8 @@
 - Fixed: the picker's preview was a few columns narrower than the agent's
   popup, so it cut off the right edge of the agent's screen; and newer fzf
   put its scroll position over the end of the first row.
+- Fixed: an agent opened from the picker kept the picker's title, "Agents".
+  It now gets a popup of its own, titled with its name, as with `prefix a`.
 - Fixed: Copilot was shown as idle while working; its hint reads "esc
   interrupt", without "to".
 - Fixed: Copilot and Codex were shown as working while they asked for your

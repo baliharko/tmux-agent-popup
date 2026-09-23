@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The session picker, run by choose-session inside a popup. Lists every agent
 # in fzf with a live preview of its screen: the plugin's own sessions, and
-# agents started by hand in ordinary panes. enter opens one: a session in
-# this same popup, a pane by switching the terminal to it. ctrl-x kills it.
+# agents started by hand in ordinary panes. enter opens one: a session in a
+# popup of its own, a pane by switching the terminal to it. ctrl-x kills it.
 #
 #   pick-session                                 run the picker
 #   pick-session --list                          print the rows
@@ -11,6 +11,7 @@
 #   pick-session --preview <kind> <target>       print an agent's screen
 #   pick-session --kill <kind> <target> <pid>    stop an agent
 #   pick-session --esc                           what esc does, for fzf
+#   pick-session --open <client> <session>       swap the picker for a session
 #
 # Rows are "<kind>\t<target>\t<pid>\t<display>". kind "session": target is a
 # session this plugin runs. kind "pane": target is a pane running an agent on
@@ -337,6 +338,20 @@ case "${1:-}" in
   fi
   exit 0
   ;;
+--open)
+  # Run through run-shell once a session is picked (see the end of this
+  # script): close the picker's popup and open the session in its own,
+  # titled with the agent's name. display-popup -C is immediate, so the new
+  # popup never opens over one that's still closing.
+  client="$2" session="$3"
+  agent="$(tmux display-message -p -t "=$session:" '#{@agent_popup_agent}' 2>/dev/null)"
+  tmux display-popup -C -c "$client"
+  [ -n "$agent" ] || exit 0 # it exited in the meantime
+  tmux set-option -t "=$session:" @agent_popup_host "$client"
+  show_popup "$client" "$(agent_option "$agent" label)" \
+    -E "exec tmux attach-session -t '=$session'" || : # see the end of open-agent
+  exit 0
+  ;;
 esac
 
 # fzf runs the commands below with $SHELL, so pin it for predictable parsing.
@@ -391,8 +406,11 @@ if [ "$kind" = pane ]; then
   exit 0
 fi
 
-# Become the agent's client in this same popup. Closing it and opening a
-# fresh one would race tmux's popup teardown, which can leave the new popup
-# without keyboard input.
-tmux set-option -t "=$target:" @agent_popup_host "$client"
-exec tmux attach-session -t "=$target"
+# Open the session in a popup titled with its agent's name: tmux can't
+# retitle this one. --open does it from outside this popup, which it closes
+# first. The picker waits here to be closed along with it: exiting would
+# close the popup too, and a popup opened while another is still closing can
+# come up without keyboard input. Client names are tty paths and session
+# names are [A-Za-z0-9_-], safe to paste.
+tmux run-shell -b "#{q:@agent_popup_dir}/scripts/pick-session --open $client $target"
+exec sleep 5

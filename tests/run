@@ -457,7 +457,8 @@ else
   press "'proj:x.nvim" # exact match; fuzzy would also hit the long temp paths
   sleep 0.3
   press '\r'
-  check 'enter opens the chosen agent in the popup' attached_to "$proj_session"
+  check 'enter opens the chosen agent in a popup' attached_to "$proj_session"
+  check '... titled with its name' screen_has "$L Claude Code $R"
   press '\x02a'
   check 'prefix a dismisses an agent opened from the picker' no_popup
   open_picker

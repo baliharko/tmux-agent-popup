@@ -104,7 +104,7 @@ The picker opens in **nav** mode:
 | Key                  | Action                                                   |
 | -------------------- | -------------------------------------------------------- |
 | `j` / `k`            | Move down / up                                           |
-| `l` / `enter`        | Open the agent: in the popup, or switch to its pane      |
+| `l` / `enter`        | Open the agent: in its popup, or switch to its pane      |
 | `h` / `q` / `esc`    | Close the picker                                         |
 | `g` / `G`            | First / last agent                                       |
 | `/` or another letter | Search                                                  |
@@ -118,10 +118,8 @@ Nav and search mode need fzf 0.46 or newer. With older fzf the picker is a
 plain fzf list: type to filter, arrows to move, `enter` to open, `ctrl-x` to
 kill, `esc` to close.
 
-A session opens in the picker's popup, so its title reads "Agents" rather
-than the agent's name. tmux can't change a popup's title once it's open, and
-closing the picker to open a new popup can leave the new one without
-keyboard input.
+A session opens in a popup of its own, titled with the agent's name, in
+place of the picker's.
 
 ### Status line
 
