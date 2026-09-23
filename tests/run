@@ -232,28 +232,21 @@ claude_says() {
   printf '[{"pid": %s, "kind": "interactive", "status": "%s"}]\n' \
     "$(t display-message -p -t "=$1:" '#{pane_pid}')" "$2" >"$TMP/claude-agents.json"
 }
-# preview_of <session>: what the picker's preview shows for it.
+# preview_of <session> [rows]: what the picker's preview shows for it, in a
+# preview <rows> high (all of it if not given).
 preview_of() {
-  TMUX="$SOCKET,$(t display-message -p '#{pid}'),0" "$PLUGIN/scripts/pick-session" --preview session "$1"
+  FZF_PREVIEW_LINES="${2:-}" TMUX="$SOCKET,$(t display-message -p '#{pid}'),0" \
+    "$PLUGIN/scripts/pick-session" --preview session "$1"
 }
-# no_background_in_preview <session>: the preview keeps the agent's text
-# colours but none of its background colours. The colour codes are parsed,
-# since a text colour's arguments look like background codes (38;5;44).
-no_background_in_preview() {
-  preview_of "$1" | "$PYTHON" -c '
-import re, sys
-fg = bg = 0
-for m in re.finditer(r"\x1b\[([0-9;:]*)m", sys.stdin.read()):
-    p, i = m.group(1).split(";"), 0
-    while i < len(p):
-        if p[i] in ("38", "48") and i + 1 < len(p):
-            fg += p[i] == "38"; bg += p[i] == "48"
-            i += {"5": 3, "2": 5}.get(p[i + 1], 1)
-            continue
-        bg += bool(re.fullmatch(r"4[0-79]|10[0-7]|48:.*", p[i]))
-        i += 1
-sys.exit(0 if fg and not bg else 1)'
+# preview_top_row_is <text>: the picker's preview starts with <text>, and
+# that's all its first row shows. The row below the picker's title.
+preview_top_row_is() {
+  snap && awk -F'│' -v t="$1" '
+    /Agents/ { getline; row = $2; sub(/ +$/, "", row); ok = index(row, t) == 1 && row !~ /[0-9]+\/[0-9]+$/; exit }
+    END { exit !ok }' "$TMP/snap"
 }
+# preview_matches <session> <rows> <regex>
+preview_matches() { preview_of "$1" "$2" | grep -qE -- "$3"; }
 # ring_bell <session>: the agent in <session> rings the terminal bell.
 ring_bell() { printf '\a' >"$(t display-message -p -t "=$1:" '#{pane_tty}')"; }
 colours_cached() { [ "$(t show-options -gv @agent_popup_colours)" = "$1" ]; }
@@ -423,10 +416,15 @@ else
   fi
   rm -f "$TMP/claude-agents.json"
   check 'the preview shows the agent screen' screen_has 'claude-standin-screen'
-  # Text in a colour whose code contains 44 (also a background code), on a
-  # background of its own, as agents with their own theme draw.
-  printf '\033[38;5;44;48;2;11;14;20mpainted\033[0m\n' >"$(t display-message -p -t "=$proj_session:" '#{pane_tty}')"
-  check "the preview keeps an agent's text colours, not its background" no_background_in_preview "$proj_session"
+  # Colours as agents with their own theme draw them: text on a background,
+  # and a row filled with a background (Copilot's text field) that carries on
+  # into the next row, where tmux doesn't repeat it.
+  tty="$(t display-message -p -t "=$proj_session:" '#{pane_tty}')"
+  printf '\033[38;5;44;48;2;11;14;20mpainted\033[0m\n' >"$tty"
+  printf '\033[48;2;49;48;54m%*scarried\033[0m\n' "$(t display-message -p -t "=$proj_session:" '#{pane_width}')" '' >"$tty"
+  check "the preview keeps an agent's colours, backgrounds too" preview_matches "$proj_session" '' '48;2;11;14;20.*painted'
+  check '... and a filled row to its end' preview_matches "$proj_session" '' '48;2;49;48;54m {50}'
+  check '... and a colour from a row above the ones that fit' preview_matches "$proj_session" 1 '48;2;49;48;54m.*carried'
   press "'proj:x.nvim" # exact match; fuzzy would also hit the long temp paths
   sleep 0.3
   press '\r'
@@ -440,6 +438,11 @@ else
   printf '%*s\n' "$(t display-message -p -t "=$proj_session:" '#{pane_width}')" 'right-edge' \
     >"$(t display-message -p -t "=$proj_session:" '#{pane_tty}')"
   check "the preview is as wide as the agent's popup" screen_has 'right-edge'
+  # More than fits: the preview shows the end, and nothing over its first row
+  # (fzf's position, on fzf 0.56 and later).
+  seq -f 'fill-%g' 40 >"$(t display-message -p -t "=$proj_session:" '#{pane_tty}')"
+  wait_for screen_has 'fill-40'
+  check '... with nothing over its first row' preview_top_row_is 'fill-'
   press '\x18'
   check 'ctrl-x kills the highlighted agent' sessions_named claude 1
   check '... and the list reloads without it' screen_has 'ctrl-x: kill'

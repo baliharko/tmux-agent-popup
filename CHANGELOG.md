@@ -14,15 +14,18 @@
 - The picker opens about three times faster: it no longer builds the list
   twice, asks Claude Code for its status in parallel, and shows the list
   before Claude's status is in.
-- The preview drops the agents' background colours, so an agent that paints
-  its own background (OpenCode) doesn't look patchy over yours.
+- The preview shows agents as their popup does, background colours
+  included. Before, an agent that paints its own background (OpenCode)
+  came out patchy, and Copilot's text field had a dark middle: the rows
+  lost the spaces at their ends, and with them their background.
 - Fixed: agents in the popup looked flat. They ask the terminal for its
   colours to shade their screens, which nothing answered in a popup; the
   plugin now learns the terminal's colours and hands them to agent panes.
   On tmux 3.6 and later also its palette, which Copilot takes its accent
   colours from.
 - Fixed: the picker's preview was a few columns narrower than the agent's
-  popup, so it cut off the right edge of the agent's screen.
+  popup, so it cut off the right edge of the agent's screen; and newer fzf
+  put its scroll position over the end of the first row.
 - Fixed: Copilot was shown as idle while working; its hint reads "esc
   interrupt", without "to".
 - Fixed: the picker could list a phantom agent for a dead pane (kept by
