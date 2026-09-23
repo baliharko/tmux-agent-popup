@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `scripts/status` summarises the agents for the tmux status line, e.g.
+  "1 waiting · 2 working · 1 idle", or nothing when none runs.
 - The picker's preview redraws ten times a second instead of once, so an
   agent's output streams in as it types. The list still updates every
   second.

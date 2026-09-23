@@ -120,6 +120,34 @@ than the agent's name. tmux can't change a popup's title once it's open, and
 closing the picker to open a new popup can leave the new one without
 keyboard input.
 
+### Status line
+
+`scripts/status` prints how many agents are waiting, working and idle, as
+the picker marks them, for your tmux status line:
+
+```
+1 waiting · 2 working · 1 idle
+```
+
+States with no agents are left out, and with no agents running it prints
+nothing. The waiting count is bold. Add it to `status-right`:
+
+```tmux
+set -ag status-right ' #(~/.config/tmux/plugins/tmux-agent-popup/scripts/status)'
+```
+
+Or, with a theme built on status-line segments, as a custom one. For
+[dracula](https://draculatheme.com/tmux) and themes derived from it:
+
+```tmux
+set -g @dracula-plugins "custom:$HOME/.config/tmux/plugins/tmux-agent-popup/scripts/status time"
+set -g @dracula-show-empty-plugins false  # hide it while no agent runs
+```
+
+Use your plugin path. tmux reruns the script every `status-interval`
+seconds; it takes a fraction of a second, a little longer with Claude Code
+running, since it asks Claude Code for its status.
+
 ### Moving around with the popup open
 
 Window and pane keys pressed inside the popup act on the window under it:

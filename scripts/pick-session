@@ -7,6 +7,7 @@
 #   pick-session                                 run the picker
 #   pick-session --list                          print the rows
 #   pick-session --any                           succeed if any agent runs
+#   pick-session --status                        summary for the status line
 #   pick-session --preview <kind> <target>       print an agent's screen
 #   pick-session --kill <kind> <target> <pid>    stop an agent
 #   pick-session --esc                           what esc does, for fzf
@@ -207,29 +208,39 @@ gather_rows() {
   done
 }
 
-# list_rows [quick]: the picker's rows. The order doesn't depend on status,
-# so the live reload never moves a row out from under the cursor: the
-# plugin's sessions, most recently opened first, then agents in ordinary
-# panes. quick leaves out Claude Code's own status, the slowest part, for
-# the first list the picker shows; the full one replaces it right after.
-list_rows() {
-  local states claude records order recency kind target pid label screen tty bell note dir status place
+# load_records [quick]
+# Sets RECORDS to gather_rows' records and CLAUDE_STATES to Claude Code's own
+# status, for agent_state. quick leaves out Claude Code's status, the slowest
+# part. Sets globals rather than printing, since agent_state reads
+# CLAUDE_STATES in this same shell.
+load_records() {
+  local states claude
   CLAUDE_STATES=''
   if [ "${1:-}" = quick ]; then
-    records="$(gather_rows)"
+    RECORDS="$(gather_rows)"
   else
     # `claude agents` takes about as long as everything else put together,
     # so it runs while the rest is gathered.
     states="$(mktemp)"
     claude_states >"$states" &
     claude=$!
-    records="$(gather_rows)"
+    RECORDS="$(gather_rows)"
     wait "$claude"
     CLAUDE_STATES="$(cat "$states")"
     rm -f "$states"
   fi
-  [ -n "$records" ] || return 0
-  printf '%s\n' "$records" |
+}
+
+# list_rows [quick]: the picker's rows. The order doesn't depend on status,
+# so the live reload never moves a row out from under the cursor: the
+# plugin's sessions, most recently opened first, then agents in ordinary
+# panes. quick (see load_records) is for the first list the picker shows;
+# the full one replaces it right after.
+list_rows() {
+  local order recency kind target pid label screen tty bell note dir status place
+  load_records "${1:-}"
+  [ -n "$RECORDS" ] || return 0
+  printf '%s\n' "$RECORDS" |
     while IFS=$'\037' read -r order recency kind target pid label screen tty bell note dir; do
       case "$(agent_state "$screen" "$tty" "$bell")" in
       working) status=$'\033[33m●\033[0m working' ;;
@@ -253,7 +264,32 @@ target_of() {
   if [ "$1" = session ]; then printf '=%s:' "$2"; else printf '%s' "$2"; fi
 }
 
+# status_line: how many agents are waiting, working and idle, for the tmux
+# status line, e.g. "1 waiting · 2 working · 1 idle". States with no agents
+# are left out; with no agents at all it prints nothing, so a status-line
+# segment that hides when empty goes away. The waiting count is bold.
+status_line() {
+  local waiting=0 working=0 idle=0 line='' screen tty bell
+  load_records
+  [ -n "$RECORDS" ] || return 0
+  while IFS=$'\037' read -r _ _ _ _ _ _ screen tty bell _; do
+    case "$(agent_state "$screen" "$tty" "$bell")" in
+    waiting) waiting=$((waiting + 1)) ;;
+    working) working=$((working + 1)) ;;
+    *) idle=$((idle + 1)) ;;
+    esac
+  done <<<"$RECORDS"
+  [ "$waiting" -eq 0 ] || line="$line · #[bold]$waiting waiting#[nobold]"
+  [ "$working" -eq 0 ] || line="$line · $working working"
+  [ "$idle" -eq 0 ] || line="$line · $idle idle"
+  printf '%s\n' "${line# · }"
+}
+
 case "${1:-}" in
+--status)
+  status_line
+  exit 0
+  ;;
 --list)
   list_rows
   exit 0

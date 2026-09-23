@@ -245,6 +245,10 @@ preview_top_row_is() {
     /Agents/ { getline; row = $2; sub(/ +$/, "", row); ok = index(row, t) == 1 && row !~ /[0-9]+\/[0-9]+$/; exit }
     END { exit !ok }' "$TMP/snap"
 }
+# status_is <text>: what the status-line script prints.
+status_is() {
+  [ "$(TMUX="$SOCKET,$(t display-message -p '#{pid}'),0" "$PLUGIN/scripts/status")" = "$1" ]
+}
 # preview_matches <session> <rows> <regex>
 preview_matches() { preview_of "$1" "$2" | grep -qE -- "$3"; }
 # ring_bell <session>: the agent in <session> rings the terminal bell.
@@ -386,6 +390,16 @@ check 'the new directory gets its own session' sessions_named claude 2
 # Wait for its popup to attach too: keys typed while it starts are replayed
 # into it afterwards, like typeahead.
 wait_for popup_on claude
+
+echo "status line"
+check 'the status line counts the running agents' status_is '2 idle'
+ring_bell "$(t list-sessions -F '#S' | grep '^agent-claude-my_proj_x_nvim-')"
+check '... and the ones waiting for you, in bold' status_is '#[bold]1 waiting#[nobold] · 1 idle'
+if command -v jq >/dev/null 2>&1; then
+  claude_says "$(t list-sessions -F '#S' | grep '^agent-claude-other-')" busy
+  check "... and those working, by Claude Code's own status" status_is '#[bold]1 waiting#[nobold] · 1 working'
+  rm -f "$TMP/claude-agents.json"
+fi
 
 echo "session picker"
 if ! command -v fzf >/dev/null 2>&1; then

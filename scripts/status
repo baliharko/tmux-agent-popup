@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# The agents' states for the tmux status line, e.g. "1 waiting · 2 working".
+# Nothing when no agent runs. Use it in status-right as
+# #(/path/to/scripts/status), or as a theme's custom segment.
+exec "$(dirname "${BASH_SOURCE[0]}")/pick-session" --status
