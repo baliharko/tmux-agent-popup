@@ -19,10 +19,17 @@
 - Fixed: agents in the popup looked flat. They ask the terminal for its
   colours to shade their screens, which nothing answered in a popup; the
   plugin now learns the terminal's colours and hands them to agent panes.
+  On tmux 3.6 and later also its palette, which Copilot takes its accent
+  colours from.
+- Fixed: the picker's preview was a few columns narrower than the agent's
+  popup, so it cut off the right edge of the agent's screen.
 - Fixed: Copilot was shown as idle while working; its hint reads "esc
   interrupt", without "to".
 - Fixed: the picker could list a phantom agent for a dead pane (kept by
   `remain-on-exit`), whose old tty had been given to another program.
+- Fixed: `ctrl-x` in the picker could leave an agent running with no window
+  when it ignored the hang-up tmux sends as the session closes. Its process
+  now also gets a SIGTERM.
 
 ## 0.2.0
 

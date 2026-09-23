@@ -27,7 +27,7 @@ tmux set-option -g @agent_popup_dir "$DIR"
 
 # Forget the terminal's colours (scripts/probe-colours), so that reloading
 # the config picks up a new terminal theme.
-tmux set-option -gu @agent_popup_colours
+tmux set-option -gu @agent_popup_colours \; set-option -gu @agent_popup_palette
 
 # bind_script <table> <key> <script>
 bind_script() {

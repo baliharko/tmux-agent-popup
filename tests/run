@@ -28,6 +28,8 @@ cleanup() {
     kill "$CPID" 2>/dev/null
     wait "$CPID" 2>/dev/null
   fi
+  # The stand-in that ignores hang-ups outlives the server if ctrl-x failed.
+  [ -s "$TMP/stubborn.pid" ] && kill "$(cat "$TMP/stubborn.pid")" 2>/dev/null
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -64,19 +66,21 @@ set -g @agent_popup_copilot_cmd 'no-such-agent-binary --flag'
 set -g @agent_popup_broken_cmd  'false'
 set -g @agent_popup_broken_label 'Broken'
 set -g @agent_popup_root_key 'M-a'
+set -as terminal-features ',xterm-256color:RGB'
 bind k select-window -t :=5 \; display-message 'custom k'
 EOF
 t -f "$TMP/tmux.conf" new-session -d -s main -x 100 -y 30 -c "$PROJ"
 SOCKET="$(t display-message -p '#{socket_path}')"
 
 # A stand-in agent that, like Codex or OpenCode, asks the terminal for its
-# background colour when it starts, and records the answer.
+# background colour when it starts, and like Copilot for a palette colour,
+# and records the answers. The second read waits out a missing answer.
 cat >"$TMP/shade" <<'EOF'
 #!/bin/sh
 old="$(stty -g)"
-stty raw -echo min 0 time 10
-printf '\033]11;?\033\\'
-dd bs=256 count=1 2>/dev/null >"$(dirname "$0")/shade.reply"
+stty raw -echo min 0 time 5
+printf '\033]11;?\033\\\033]4;10;?\033\\'
+dd bs=256 count=2 2>/dev/null >"$(dirname "$0")/shade.reply"
 stty "$old"
 exec sleep 600
 EOF
@@ -253,6 +257,13 @@ sys.exit(0 if fg and not bg else 1)'
 # ring_bell <session>: the agent in <session> rings the terminal bell.
 ring_bell() { printf '\a' >"$(t display-message -p -t "=$1:" '#{pane_tty}')"; }
 colours_cached() { [ "$(t show-options -gv @agent_popup_colours)" = "$1" ]; }
+palette_cached() { [ "$(t show-options -gv @agent_popup_palette)" = "$1" ]; }
+# tmux_at_least <major> <minor>: prints "yes" if the server's tmux is that
+# version or newer ("3.4", "3.7c", "next-3.8").
+tmux_at_least() {
+  t display-message -p '#{version}' | sed 's/[^0-9.]//g' |
+    awk -F. -v M="$1" -v m="$2" '$1 > M || ($1 == M && $2 + 0 >= m) { print "yes" }'
+}
 windows_in_main() { [ "$(t list-windows -t main | wc -l | tr -d ' ')" = "$1" ]; }
 process_gone() { ! kill -0 "$1" 2>/dev/null; }
 window_is() { [ "$(t display-message -p -t main: '#{window_index}')" = "$1" ]; }
@@ -282,6 +293,12 @@ check 'remain-on-exit is forced off' opt_is claude remain-on-exit off -w
 
 echo "terminal colours"
 check "the terminal's colours are learned once and cached" colours_cached 'fg=#dcd7ba,bg=#1f1f28'
+# tmux passes palette questions on to the terminal from 3.6.
+if [ "$(tmux_at_least 3 6)" ]; then
+  check '... with its palette' palette_cached '#102030 #112131 #122232 #132333 #142434 #152535 #162636 #172737 #182838 #192939 #1a2a3a #1b2b3b #1c2c3c #1d2d3d #1e2e3e #1f2f3f'
+else
+  check '... without a palette on this tmux' palette_cached none
+fi
 check '... by a window that closes itself' windows_in_main 1
 press '\x02a' # put away Claude Code's popup from above
 wait_for no_popup
@@ -290,6 +307,9 @@ wait_for screen_has 'Agents'
 press '5'
 check 'an agent asking for the background gets the real terminal colour' \
   grep -q 'rgb:1f1f/1f1f/2828' "$TMP/shade.reply"
+if [ "$(tmux_at_least 3 6)" ]; then
+  check '... and for a palette colour, the real one' grep -q ']4;10;rgb:1a1a/2a2a/3a3a' "$TMP/shade.reply"
+fi
 press '\x02a'
 wait_for no_popup
 t kill-session -t "=$(session_for shade)"
@@ -415,6 +435,11 @@ else
   check 'prefix a dismisses an agent opened from the picker' no_popup
   open_picker
   check 'looking at an agent clears its bell' screen_has '● idle     Claude Code  my proj:x.nvim'
+  # The agent was just in its popup, which sized it. A line that ends in its
+  # last column shows whole in the preview (the list's first row).
+  printf '%*s\n' "$(t display-message -p -t "=$proj_session:" '#{pane_width}')" 'right-edge' \
+    >"$(t display-message -p -t "=$proj_session:" '#{pane_tty}')"
+  check "the preview is as wide as the agent's popup" screen_has 'right-edge'
   press '\x18'
   check 'ctrl-x kills the highlighted agent' sessions_named claude 1
   check '... and the list reloads without it' screen_has 'ctrl-x: kill'
@@ -428,6 +453,22 @@ else
   check '... closing the agent popup' no_popup
   press '\x03'
   check '... and the picker takes keys' no_picker
+  # An agent that ignores the hang-up tmux sends when its session is killed,
+  # as one in the middle of a turn may. It writes its pid, which exec keeps.
+  # shellcheck disable=SC2016 # expanded by the stand-in
+  printf '%s\n' '#!/bin/sh' "trap '' HUP" 'echo $$ >"$(dirname "$0")/stubborn.pid"' 'exec sleep 600' >"$TMP/stubborn"
+  chmod +x "$TMP/stubborn"
+  t new-session -d -s agent-stubborn-x -c "$OTHER" "$TMP/stubborn" \; \
+    set-option -t '=agent-stubborn-x:' @agent_popup_agent stubborn \; \
+    set-option -t '=agent-stubborn-x:' @agent_popup_path "$OTHER"
+  wait_for test -s "$TMP/stubborn.pid"
+  open_picker
+  press "'stubborn"
+  wait_for screen_has '1/'
+  press '\x18'
+  check 'ctrl-x stops an agent even if it ignores the hang-up' process_gone "$(cat "$TMP/stubborn.pid")"
+  press '\x03'
+  wait_for no_picker
   t kill-session -t "=$(session_for claude)"
   press '\x02u'
   check 'prefix u with no agents running says so' screen_has 'no agents running'

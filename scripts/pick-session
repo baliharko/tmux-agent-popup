@@ -279,10 +279,17 @@ case "${1:-}" in
   exit 0
   ;;
 --kill)
-  # A session goes entirely. For a pane, only the agent: the pane keeps
-  # whatever it was started from, usually a shell.
+  # A session goes entirely, agent included. tmux hangs up on the session's
+  # programs, but one that ignores that (an agent in the middle of a turn,
+  # say) carries on with no window; so each pane's process group also gets
+  # a SIGTERM. For a pane, only the agent: the pane keeps whatever it was
+  # started from, usually a shell.
   if [ "$2" = session ]; then
+    pids="$(tmux list-panes -s -t "=$3" -F '#{pane_pid}')"
     tmux kill-session -t "=$3"
+    for pid in $pids; do
+      kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+    done
   else
     kill "$4"
     sleep 0.3 # let it exit before the list is reloaded
@@ -298,8 +305,14 @@ export SHELL=/bin/sh FZF_DEFAULT_OPTS='' AGENT_POPUP_PICKER="$DIR/pick-session"
 # shellcheck disable=SC2016 # expanded by fzf's shell
 opts=(--ansi --no-sort --reverse --cycle --delimiter $'\t' --with-nth 4
   --preview '"$AGENT_POPUP_PICKER" --preview {1} {2}'
-  --preview-window 'up,70%,follow'
+  --preview-window 'up,70%,follow,border-bottom'
   --bind 'ctrl-x:execute-silent("$AGENT_POPUP_PICKER" --kill {1} {2} {3})+reload("$AGENT_POPUP_PICKER" --list)')
+# The preview is as wide as the agent's popup, so it shows the agent's screen
+# uncut: its only border is the line below it, and fzf's scrollbar (0.36 and
+# later) would take its last column.
+if fzf_at_least 0 36; then
+  opts+=(--no-scrollbar)
+fi
 # Live: redraw the preview ten times a second so it follows the agent as it
 # types, and reload the list (statuses) every second. Without fzf's timer,
 # each finished load starts the next reload after a pause instead, which

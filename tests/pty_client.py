@@ -8,7 +8,7 @@ client's rendered screen to <file>. Output is rendered with pyte, so a
 snapshot shows what a terminal would: popups, menus and their titles.
 
 Like a real terminal, it answers queries for its default colours (OSC 10 and
-11), with FG and BG below.
+11) and its palette (OSC 4), with FG, BG and PALETTE below.
 """
 import codecs
 import fcntl
@@ -24,7 +24,9 @@ import pyte
 
 ROWS, COLS = 30, 100
 FG, BG = b"rgb:dcdc/d7d7/baba", b"rgb:1f1f/1f1f/2828"
-COLOUR_QUERY = re.compile(rb"\033\](1[01]);\?(\007|\033\\)")
+# Colour n is rgb:1n/2n/3n in hex, e.g. 1a2a3a for 10.
+PALETTE = [b"rgb:1%x1%x/2%x2%x/3%x3%x" % ((n,) * 6) for n in range(16)]
+COLOUR_QUERY = re.compile(rb"\033\](1[01]|4;(\d+));\?(\007|\033\\)")
 
 
 class Screen(pyte.Screen):
@@ -68,8 +70,11 @@ def main():
                 pass
             seen = seen[-64:] + data
             for query in COLOUR_QUERY.finditer(seen):
-                colour = FG if query.group(1) == b"10" else BG
-                os.write(fd, b"\033]" + query.group(1) + b";" + colour + query.group(2))
+                if query.group(2) is not None:
+                    colour = PALETTE[int(query.group(2)) % 16]
+                else:
+                    colour = FG if query.group(1) == b"10" else BG
+                os.write(fd, b"\033]" + query.group(1) + b";" + colour + query.group(3))
             seen = COLOUR_QUERY.sub(b"", seen)
         if ctl in ready:
             buf += os.read(ctl, 4096)

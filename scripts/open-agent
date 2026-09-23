@@ -17,15 +17,21 @@ dir="$(tmux display-message -p -t "$pane" '#{pane_current_path}')"
 [ -n "$dir" ] || exit 0
 session="$(session_name "$agent" "$dir")"
 
-# Agents ask the terminal for its colours (OSC 10 and 11) to shade their
-# screens, and tmux answers from a terminal showing the pane. An agent session
-# has none: it starts with no client, and the popup's client is drawn by tmux
-# itself. So the agent's pane gets the real terminal's colours as its style,
-# which tmux answers with instead; they look the same. Set in the same command
-# as the session, so it's in place before the agent's first question.
+# Agents ask the terminal for its colours (OSC 10 and 11) and palette (OSC
+# 4) to fit their screens to it, and tmux answers from, or asks, a terminal
+# showing the pane. An agent session has none: it starts with no client, and
+# the popup's client is drawn by tmux itself. So the agent's pane gets the
+# real terminal's colours as its style and palette, which tmux answers with
+# instead; they look the same. Set in the same command as the session, so
+# they're in place before the agent's first question.
 colours="$(terminal_colours "$client")"
-style=()
-[ -n "$colours" ] && style=(\; set-option -p -t "=$session:" window-style "$colours")
+colouring=()
+[ -n "$colours" ] && colouring=(\; set-option -p -t "=$session:" window-style "$colours")
+i=0
+for colour in $(terminal_palette); do
+  colouring+=(\; set-option -p -t "=$session:" "pane-colours[$i]" "$colour")
+  i=$((i + 1))
+done
 
 if ! tmux has-session -t "=$session" 2>/dev/null; then
   cmd="$(agent_option "$agent" cmd)"
@@ -39,7 +45,7 @@ if ! tmux has-session -t "=$session" 2>/dev/null; then
     fi
     ;;
   esac
-  tmux new-session -d -s "$session" -c "$dir" "$cmd" ${style[@]+"${style[@]}"}
+  tmux new-session -d -s "$session" -c "$dir" "$cmd" ${colouring[@]+"${colouring[@]}"}
 fi
 
 # Set on every open, so config changes reach sessions that already exist.
@@ -58,7 +64,7 @@ if ! tmux set-option -t "$target" @agent_popup_agent "$agent" \; \
   set-option -t "$target" @agent_popup_host "$client" \; \
   set-option -t "$target" status "$(get_option @agent_popup_status off)" \; \
   set-option -t "$target" detach-on-destroy on \; \
-  set-option -w -t "$target" remain-on-exit off ${style[@]+"${style[@]}"} 2>/dev/null ||
+  set-option -w -t "$target" remain-on-exit off ${colouring[@]+"${colouring[@]}"} 2>/dev/null ||
   [ "$(tmux display-message -p -t "$target" '#{pane_dead}')" = 1 ]; then
   tmux kill-session -t "=$session" 2>/dev/null
   tmux display-message -c "$client" "agent-popup: $label exited straight away"

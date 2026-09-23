@@ -1,21 +1,54 @@
 #!/bin/sh
 # Run by terminal_colours in a background window of the client's session:
-# ask the terminal for its default colours (OSC 10 and 11), store them in
-# @agent_popup_colours as a tmux style ("fg=#rrggbb,bg=#rrggbb", or "none" if
-# nothing answered), and close this window. tmux answers from what it knows
-# of the terminals showing this session, so the reply is immediate.
+# ask the terminal for its default colours (OSC 10 and 11) and its first 16
+# palette colours (OSC 4), store them, and close this window.
+#
+#   @agent_popup_colours  a tmux style, "fg=#rrggbb,bg=#rrggbb"
+#   @agent_popup_palette  the 16 colours, "#rrggbb #rrggbb ..."
+#
+# Either is "none" if the terminal didn't say. tmux answers the default
+# colours itself, from what it knows of the terminals showing this session.
+# Palette questions it passes on to the terminal (tmux 3.6 and later), so
+# those answers take a moment; older versions leave them unanswered.
 old="$(stty -g)"
-stty raw -echo min 0 time 1
+stty raw -echo min 0 time 2
 # shellcheck disable=SC1003 # \\ is the string terminator's backslash
 printf '\033]10;?\033\\\033]11;?\033\\'
-reply="$(dd bs=256 count=4 2>/dev/null)"
+i=0
+while [ "$i" -lt 16 ]; do
+  # shellcheck disable=SC1003
+  printf '\033]4;%d;?\033\\' "$i"
+  i=$((i + 1))
+done
+# Read until the last palette colour is in, or nothing more comes for 0.2s.
+reply=''
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  chunk="$(dd bs=4096 count=1 2>/dev/null)"
+  [ -n "$chunk" ] || break
+  reply="$reply$chunk"
+  case "$reply" in *']4;15;'*) break ;; esac
+done
 stty "$old"
 
-# hex <10 or 11>: the colour from "ESC]11;rgb:rrrr/gggg/bbbb", as #rrggbb.
+# hex <10, 11 or 4;n>: the colour from "ESC]<n>;rgb:rrrr/gggg/bbbb", as
+# #rrggbb.
 hex() {
   printf '%s' "$reply" |
     sed -n "s/.*]$1;rgb:\([0-9a-fA-F][0-9a-fA-F]\)[0-9a-fA-F]*\/\([0-9a-fA-F][0-9a-fA-F]\)[0-9a-fA-F]*\/\([0-9a-fA-F][0-9a-fA-F]\).*/#\1\2\3/p"
 }
 fg="$(hex 10)" bg="$(hex 11)"
 if [ -n "$fg" ] && [ -n "$bg" ]; then style="fg=$fg,bg=$bg"; else style=none; fi
-tmux set-option -g @agent_popup_colours "$style" \; kill-pane -t "$TMUX_PANE"
+palette=''
+i=0
+while [ "$i" -lt 16 ]; do
+  colour="$(hex "4;$i")"
+  if [ -z "$colour" ]; then
+    palette=none
+    break
+  fi
+  palette="$palette${palette:+ }$colour"
+  i=$((i + 1))
+done
+tmux set-option -g @agent_popup_palette "$palette" \; \
+  set-option -g @agent_popup_colours "$style" \; \
+  kill-pane -t "$TMUX_PANE"

@@ -97,18 +97,30 @@ dir_agents() {
 
 # terminal_colours <client>
 # The default colours of <client>'s terminal as a tmux style, e.g.
-# "fg=#dcd7ba,bg=#1f1f28", or nothing if the terminal doesn't say. Learned
-# by probe-colours (next to this file) in a background window of the
-# client's session, and cached in @agent_popup_colours until the plugin is
-# loaded again. The window's status-line entry is made blank in the same
-# command that creates it, so it never shows.
+# "fg=#dcd7ba,bg=#1f1f28", or nothing if the terminal doesn't say. Learned,
+# with its palette (terminal_palette), by probe-colours (next to this file)
+# in a background window of the client's session, and cached in
+# @agent_popup_colours and @agent_popup_palette until the plugin is loaded
+# again. The window's status-line entry is made blank in the same command
+# that creates it, so it never shows.
+#
+# Only for a terminal that tmux draws RGB colours on: on others tmux would
+# round them to the nearest of 256, and the agent's background wouldn't
+# match yours.
 terminal_colours() {
-  local style session
+  local style session features
   style="$(tmux show-option -gqv @agent_popup_colours)"
   if [ -z "$style" ]; then
-    session="$(tmux list-clients -F '#{client_name} #{client_session}' |
-      awk -v c="$1" '$1 == c { print $2; exit }')"
+    read -r session features <<<"$(tmux list-clients -F '#{client_name} #{client_session} #{client_termfeatures}' |
+      awk -v c="$1" '$1 == c { print $2, $3; exit }')"
     [ -n "$session" ] || return 0
+    case ",$features," in
+    *,RGB,*) ;;
+    *)
+      tmux set-option -g @agent_popup_palette none \; set-option -g @agent_popup_colours none
+      return 0
+      ;;
+    esac
     # shellcheck disable=SC2016 # expanded by the window's shell
     tmux new-window -d -t "=$session:" -n agent-popup-probe \
       -e "AGENT_POPUP_PROBE=$(dirname "${BASH_SOURCE[0]}")/probe-colours" \
@@ -122,6 +134,15 @@ terminal_colours() {
     done
   fi
   [ "$style" = none ] || printf '%s' "$style"
+}
+
+# terminal_palette
+# The terminal's first 16 colours, "#rrggbb" separated by spaces, or nothing
+# if it didn't say. Learned by terminal_colours, which has to come first.
+terminal_palette() {
+  local palette
+  palette="$(tmux show-option -gqv @agent_popup_palette)"
+  [ "$palette" = none ] || printf '%s' "$palette"
 }
 
 # titled <text>
