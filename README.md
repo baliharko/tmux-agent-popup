@@ -122,15 +122,18 @@ keyboard input.
 
 ### Status line
 
-`scripts/status` prints how many agents are waiting, working and idle, as
-the picker marks them, for your tmux status line:
+`scripts/status` shows how many agents are waiting, working and idle, as
+the picker marks them, for your tmux status line: a light in the picker's
+colours and a count for each.
 
 ```
-1 waiting · 2 working · 1 idle
+● 1  ● 2  ● 1        red: waiting · yellow: working · green: idle
 ```
 
 States with no agents are left out, and with no agents running it prints
-nothing. The waiting count is bold. Add it to `status-right`:
+nothing. The lights use your terminal's red, yellow and green; the counts
+are in the status line's default colour (`fg=default`). Add it to
+`status-right`:
 
 ```tmux
 set -ag status-right ' #(~/.config/tmux/plugins/tmux-agent-popup/scripts/status)'
@@ -142,6 +145,7 @@ Or, with a theme built on status-line segments, as a custom one. For
 ```tmux
 set -g @dracula-plugins "custom:$HOME/.config/tmux/plugins/tmux-agent-popup/scripts/status time"
 set -g @dracula-show-empty-plugins false  # hide it while no agent runs
+set -g @dracula-custom-plugin-colors "dark_gray white"  # lights on a dark background
 ```
 
 Use your plugin path. tmux reruns the script every `status-interval`

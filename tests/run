@@ -392,12 +392,12 @@ check 'the new directory gets its own session' sessions_named claude 2
 wait_for popup_on claude
 
 echo "status line"
-check 'the status line counts the running agents' status_is '2 idle'
+check 'the status line counts the running agents, under a green light' status_is '#[fg=green]●#[fg=default] 2'
 ring_bell "$(t list-sessions -F '#S' | grep '^agent-claude-my_proj_x_nvim-')"
-check '... and the ones waiting for you, in bold' status_is '#[bold]1 waiting#[nobold] · 1 idle'
+check '... a red light for the ones waiting for you' status_is '#[fg=red]#[bold]●#[fg=default] 1#[nobold]  #[fg=green]●#[fg=default] 1'
 if command -v jq >/dev/null 2>&1; then
   claude_says "$(t list-sessions -F '#S' | grep '^agent-claude-other-')" busy
-  check "... and those working, by Claude Code's own status" status_is '#[bold]1 waiting#[nobold] · 1 working'
+  check "... and a yellow one for those working, by Claude Code's own status" status_is '#[fg=red]#[bold]●#[fg=default] 1#[nobold]  #[fg=yellow]●#[fg=default] 1'
   rm -f "$TMP/claude-agents.json"
 fi
 

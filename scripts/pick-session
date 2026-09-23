@@ -265,9 +265,12 @@ target_of() {
 }
 
 # status_line: how many agents are waiting, working and idle, for the tmux
-# status line, e.g. "1 waiting · 2 working · 1 idle". States with no agents
-# are left out; with no agents at all it prints nothing, so a status-line
-# segment that hides when empty goes away. The waiting count is bold.
+# status line: a light in the picker's colours and a count per state, e.g.
+# "● 1  ● 2  ● 1" in red, yellow and green. States with no agents are left
+# out; with no agents at all it prints nothing, so a status-line segment
+# that hides when empty goes away. Only the lights are coloured: the counts
+# are in the status line's default colour. Each style is its own #[...],
+# since themes put segments inside #{?...}, where a comma ends the branch.
 status_line() {
   local waiting=0 working=0 idle=0 line='' screen tty bell
   load_records
@@ -279,10 +282,10 @@ status_line() {
     *) idle=$((idle + 1)) ;;
     esac
   done <<<"$RECORDS"
-  [ "$waiting" -eq 0 ] || line="$line · #[bold]$waiting waiting#[nobold]"
-  [ "$working" -eq 0 ] || line="$line · $working working"
-  [ "$idle" -eq 0 ] || line="$line · $idle idle"
-  printf '%s\n' "${line# · }"
+  [ "$waiting" -eq 0 ] || line="$line  #[fg=red]#[bold]●#[fg=default] $waiting#[nobold]"
+  [ "$working" -eq 0 ] || line="$line  #[fg=yellow]●#[fg=default] $working"
+  [ "$idle" -eq 0 ] || line="$line  #[fg=green]●#[fg=default] $idle"
+  printf '%s\n' "${line#  }"
 }
 
 case "${1:-}" in
