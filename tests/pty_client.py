@@ -6,6 +6,7 @@ Each line written to the FIFO is either typed into the client (Python escapes,
 e.g. "\\x02a" for C-b a) or, when it starts with "#snap <file>", dumps the
 client's rendered screen to <file>. Output is rendered with pyte, so a
 snapshot shows what a terminal would: popups, menus and their titles.
+"#fg <file> <char>" writes the colour of the first <char> on screen to <file>.
 
 Like a real terminal, it answers queries for its default colours (OSC 10 and
 11) and its palette (OSC 4), with FG, BG and PALETTE below.
@@ -85,6 +86,17 @@ def main():
                     path = line[len("#snap "):]
                     with open(path + ".tmp", "w") as out:
                         out.write("\n".join(row.rstrip() for row in screen.display) + "\n")
+                    os.rename(path + ".tmp", path)
+                elif line.startswith("#fg "):
+                    # "#fg <file> <char>": the colour of the first <char> on
+                    # screen, as pyte names it ("green", "default", or hex),
+                    # or "none" if it isn't there.
+                    path, char = line[len("#fg "):].rsplit(" ", 1)
+                    colour = next((cell.fg for y in range(ROWS)
+                                   for cell in (screen.buffer[y][x] for x in range(COLS))
+                                   if cell.data == char), "none")
+                    with open(path + ".tmp", "w") as out:
+                        out.write(colour + "\n")
                     os.rename(path + ".tmp", path)
                 else:
                     keys = codecs.decode(line, "unicode_escape").encode("latin-1")

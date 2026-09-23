@@ -38,5 +38,6 @@ done
 
 tmux display-menu -c "$client" -t "$pane" -x C -y C \
   -b "$(get_option @agent_popup_border rounded)" \
+  -S "$(border_style)" \
   -T "$(titled Agents)" \
   "${items[@]}"

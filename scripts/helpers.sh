@@ -153,6 +153,13 @@ titled() {
   printf '\356\202\263 %s \356\202\261' "${1//\#/##}"
 }
 
+# border_style
+# The style of popup and menu frames, titles included. Green by default;
+# "default" follows tmux's popup-border-style and menu-border-style.
+border_style() {
+  get_option @agent_popup_border_style fg=green
+}
+
 # show_popup <client> <title> <display-popup args...>
 # A popup in the configured size and border. Blocks until it closes.
 show_popup() {
@@ -162,6 +169,7 @@ show_popup() {
     -w "$(get_option @agent_popup_width 90%)" \
     -h "$(get_option @agent_popup_height 90%)" \
     -b "$(get_option @agent_popup_border rounded)" \
+    -S "$(border_style)" \
     -T "$(titled "$title")" \
     "$@"
 }

@@ -100,6 +100,8 @@ exec 3<>"$TMP/ctl"
 # Powerline thin chevrons around menu and popup titles (U+E0B3, U+E0B1).
 # printf rather than $'\u...': macOS ships bash 3.2.
 L="$(printf '\356\202\263')" R="$(printf '\356\202\261')"
+# The top-left corner of a rounded frame (U+256D).
+CORNER="$(printf '\342\225\255')"
 
 failures=0
 pass() { printf '  ok    %s\n' "$1"; }
@@ -164,6 +166,14 @@ snap() {
   wait_for test -f "$TMP/snap"
 }
 screen_has() { snap && grep -qF -- "$1" "$TMP/snap"; }
+# frame_is <colour>: the popup's or menu's frame is in <colour>, as pyte
+# names it ("green" for the terminal's green).
+frame_is() {
+  rm -f "$TMP/fg"
+  printf '#fg %s %s\n' "$TMP/fg" "$CORNER" >&3
+  wait_for test -f "$TMP/fg"
+  [ "$(cat "$TMP/fg")" = "$1" ]
+}
 
 session_for() { t list-sessions -F '#S' | grep "^agent-$1-" | head -n 1; }
 has_session() { [ -n "$(session_for "$1")" ]; }
@@ -279,10 +289,12 @@ echo "first use"
 press '\x02a'
 check 'prefix a with nothing running opens the menu' screen_has 'Agents'
 check 'the menu title has the chevrons' screen_has "$L Agents $R"
+check '... and a green frame' frame_is green
 check 'the menu lists every agent' screen_has 'Broken'
 press '1'
 check 'choosing Claude Code opens its popup' popup_on claude
 check 'the popup title has the chevrons' screen_has "$L Claude Code $R"
+check '... and a green frame' frame_is green
 check 'the session is named after the directory' has_session 'claude-my_proj_x_nvim'
 check 'status bar is off in the session' opt_is claude status off
 check 'detach-on-destroy is forced on' opt_is claude detach-on-destroy on
@@ -317,9 +329,12 @@ echo "toggle"
 press '\x02a'
 check 'prefix a inside the popup dismisses it' no_popup
 check 'the agent keeps running' has_session claude
+t set-option -g @agent_popup_border_style fg=blue
 press '\x02a'
 check 'prefix a reopens the agent without the menu' popup_on claude
 check '... in the same session' sessions_named claude 1
+check '... in the frame colour set with @agent_popup_border_style' frame_is blue
+t set-option -gu @agent_popup_border_style
 press '\x02d'
 check 'prefix d dismisses it too' no_popup
 

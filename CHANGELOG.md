@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Popups and the agent menu have a green frame: the terminal's green,
+  title included. `@agent_popup_border_style` sets another style, or
+  `default` for tmux's own `popup-border-style` and `menu-border-style`.
 - `scripts/status` summarises the agents for the tmux status line: a red,
   yellow and green light (waiting, working, idle) with a count for each,
   or nothing when none runs.

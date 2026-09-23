@@ -174,6 +174,7 @@ set -g @agent_popup_root_key   ''         # toggle without prefix, e.g. 'M-a'
 set -g @agent_popup_width      '90%'
 set -g @agent_popup_height     '90%'
 set -g @agent_popup_border     'rounded'  # any popup-border-lines value
+set -g @agent_popup_border_style 'fg=green' # frame and title colour
 set -g @agent_popup_status     'off'      # status bar inside the popup
 set -g @agent_popup_passthrough_keys '0 1 2 3 4 5 6 7 8 9 n p l w s ( ) h j k'
 
@@ -193,8 +194,11 @@ Commands can include arguments or wrappers:
 set -g @agent_popup_claude_cmd 'claude --dangerously-skip-permissions'
 ```
 
-The border and menu colours follow tmux's own `popup-border-style`,
-`menu-style` and `menu-selected-style`.
+The frame of the popups and the agent menu, title included, is in your
+terminal's green. `@agent_popup_border_style` takes any tmux style, e.g.
+`fg=#7e9cd8`, or `default` to follow tmux's own `popup-border-style` and
+`menu-border-style`. The menu's other colours follow `menu-style` and
+`menu-selected-style`.
 
 ## Adding an agent
 
