@@ -99,7 +99,7 @@ picker finds those by process name: a process named like one of the agents in
 `@agent_popup_agents`, or a node, bun, deno or python script of that name.
 An agent whose name differs from its program's isn't found this way.
 
-The picker opens in **nav** mode:
+The picker opens in **nav** mode, which shows just the agents and the keys:
 
 | Key                  | Action                                                   |
 | -------------------- | -------------------------------------------------------- |
@@ -107,16 +107,19 @@ The picker opens in **nav** mode:
 | `l` / `enter`        | Open the agent: in its popup, or switch to its pane      |
 | `h` / `q` / `esc`    | Close the picker                                         |
 | `g` / `G`            | First / last agent                                       |
-| `/` or another letter | Search                                                  |
+| `/`                  | Search                                                   |
 | `ctrl-x`             | Kill it: the whole session, or just the agent in a pane  |
 
-In **search** mode every key types into the filter and `enter` opens the
-highlighted match. `esc` goes back to nav mode and keeps the filter, so you can
-move through the matches with `j` and `k`.
+In **search** mode an input line comes up: every key types into the filter,
+and `enter` opens the highlighted match. `esc` hides the input line and goes
+back to nav mode, keeping the filter, so you can move through the matches with
+`j` and `k`; the key hints then start with the filter.
 
-Nav and search mode need fzf 0.46 or newer. With older fzf the picker is a
-plain fzf list: type to filter, arrows to move, `enter` to open, `ctrl-x` to
-kill, `esc` to close.
+Nav and search mode need fzf 0.46 or newer, and hiding the input line in nav
+mode 0.59. On fzf 0.46 to 0.58 the input line always shows, and any other
+letter also starts a search. With older fzf the picker is a plain fzf list:
+type to filter, arrows to move, `enter` to open, `ctrl-x` to kill, `esc` to
+close.
 
 A session opens in a popup of its own, titled with the agent's name, in
 place of the picker's.

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The picker's nav mode shows just the agents and the keys: the input
+  line comes up only with `/` (fzf 0.59 and later), so other letters no
+  longer start a search. A filter kept after `esc` shows in the key hints.
+  In search mode the count sits at the end of the input line instead of on
+  a line of its own; fzf's gutter left of the rows is blank instead of a
+  dark bar, and the current row is highlighted across its whole width.
 - `@agent_popup_transparent on` leaves agent panes' background to the
   terminal, for a see-through one: filled with the terminal's background
   colour, they came out solid. Agents asking for the background then get

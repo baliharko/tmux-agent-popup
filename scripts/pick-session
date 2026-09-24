@@ -59,14 +59,16 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Two modes on fzf 0.46 and newer, told apart by the prompt. nav: j/k move,
 # l opens, h/q/esc close, g/G jump to the ends. search: every key types into
-# the filter; esc goes back to nav and keeps it. / or any unbound key in nav
-# mode switches to search.
+# the filter; esc goes back to nav and keeps it. From fzf 0.59 nav mode hides
+# the input line, and / switches to search. Before, the input line always
+# shows, and so / or any unbound key switches, since typing goes into it.
 NAV_PROMPT='nav> ' SEARCH_PROMPT='search> '
 NAV_KEYS='h,j,k,l,g,G,q,/'
 NAV_HEADER='j/k: move · l: open · /: search · ctrl-x: kill · q: close'
 SEARCH_HEADER='enter: open · esc: back to j/k · ctrl-x: kill'
 TO_SEARCH="unbind($NAV_KEYS,change)+change-prompt($SEARCH_PROMPT)+change-header($SEARCH_HEADER)"
-TO_NAV="rebind($NAV_KEYS,change)+change-prompt($NAV_PROMPT)+change-header($NAV_HEADER)"
+TO_NAV_KEYS="rebind($NAV_KEYS,change)+change-prompt($NAV_PROMPT)"
+TO_NAV="$TO_NAV_KEYS+change-header($NAV_HEADER)"
 
 # fzf_at_least <major> <minor>
 fzf_at_least() {
@@ -316,8 +318,19 @@ case "${1:-}" in
   exit
   ;;
 --esc)
-  # From search back to nav; from nav, close the picker.
-  if [ "${FZF_PROMPT:-}" = "$SEARCH_PROMPT" ]; then printf '%s' "$TO_NAV"; else printf abort; fi
+  # From search back to nav; from nav, close the picker. fzf 0.59 and later
+  # (which set FZF_INPUT_STATE) hide the input line again, so a filter kept
+  # from the search goes in the header. The query can hold anything, so it
+  # goes last, in the colon form, which takes the rest as it is.
+  if [ "${FZF_PROMPT:-}" != "$SEARCH_PROMPT" ]; then
+    printf abort
+  elif [ -z "${FZF_INPUT_STATE:-}" ]; then
+    printf '%s' "$TO_NAV"
+  elif [ -z "${FZF_QUERY:-}" ]; then
+    printf 'hide-input+%s' "$TO_NAV"
+  else
+    printf 'hide-input+%s+change-header:filter: %s · %s' "$TO_NAV_KEYS" "$FZF_QUERY" "$NAV_HEADER"
+  fi
   exit 0
   ;;
 --kill)
@@ -383,7 +396,28 @@ if fzf_has_timer; then
 else
   opts+=(--bind 'load:reload-sync(sleep 1; "$AGENT_POPUP_PICKER" --list)+refresh-preview')
 fi
-if fzf_at_least 0 46; then
+# fzf's gutter, the column left of the rows, blank instead of a dark bar,
+# which a see-through terminal would draw solid; and the current row
+# highlighted across its whole width rather than up to its last character.
+if fzf_at_least 0 66; then
+  opts+=(--gutter ' ')
+elif fzf_at_least 0 46; then
+  opts+=(--color gutter:-1)
+fi
+if fzf_at_least 0 52; then
+  opts+=(--highlight-line)
+fi
+# Nav mode shows only the rows and the keys: no input line, which comes up
+# with /. In search mode the count goes at the end of the input line rather
+# than on a line of its own.
+if fzf_at_least 0 59; then
+  # shellcheck disable=SC2016 # expanded by fzf's shell
+  opts+=(--no-input --info inline-right --no-separator
+    --prompt "$NAV_PROMPT" --header "$NAV_HEADER"
+    --bind 'j:down,k:up,l:accept,h:abort,q:abort,g:first,G:last'
+    --bind "/:show-input+$TO_SEARCH"
+    --bind 'esc:transform:"$AGENT_POPUP_PICKER" --esc')
+elif fzf_at_least 0 46; then
   # shellcheck disable=SC2016 # expanded by fzf's shell
   opts+=(--prompt "$NAV_PROMPT" --header "$NAV_HEADER"
     --bind 'j:down,k:up,l:accept,h:abort,q:abort,g:first,G:last'

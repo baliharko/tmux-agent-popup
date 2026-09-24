@@ -219,6 +219,23 @@ fzf_at_least() {
   v="${v%% *}"
   [ "${v%%.*}" -gt "$1" ] || { [ "${v%%.*}" -eq "$1" ] && [ "$(printf '%s' "${v#*.}" | cut -d. -f1)" -ge "$2" ]; }
 }
+# search <text>: filter the picker's list. From fzf 0.46, / starts a search
+# (from 0.59 only / does); before, typing does.
+search() {
+  if fzf_at_least 0 46; then press '/'; fi
+  press "$1"
+}
+# nav_mode: the picker is in nav mode, with no input line on fzf 0.59 and
+# later, and its nav prompt before.
+nav_mode() {
+  if fzf_at_least 0 59; then
+    snap && grep -qF 'j/k: move' "$TMP/snap" && ! grep -qE 'nav>|search>' "$TMP/snap"
+  else
+    screen_has 'nav>'
+  fi
+}
+# rows_are <n>: the picker lists <n> agents.
+rows_are() { snap && [ "$(grep -cE '● (idle|working|waiting) ' "$TMP/snap")" -eq "$1" ]; }
 # fzf's loading spinner (one of its braille frames) on the count line.
 spinner_on() { grep -E '[0-9]+/[0-9]+' "$TMP/snap" | grep -qE '⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏'; }
 # mostly_idle_spinner: the spinner is off in at least half of 6 screens taken
@@ -460,7 +477,7 @@ else
   check "the preview keeps an agent's colours, backgrounds too" preview_matches "$proj_session" '' '48;2;11;14;20.*painted'
   check '... and a filled row to its end' preview_matches "$proj_session" '' '48;2;49;48;54m {50}'
   check '... and a colour from a row above the ones that fit' preview_matches "$proj_session" 1 '48;2;49;48;54m.*carried'
-  press "'proj:x.nvim" # exact match; fuzzy would also hit the long temp paths
+  search "'proj:x.nvim" # exact match; fuzzy would also hit the long temp paths
   sleep 0.3
   press '\r'
   check 'enter opens the chosen agent in a popup' attached_to "$proj_session"
@@ -502,7 +519,7 @@ else
     set-option -t '=agent-stubborn-x:' @agent_popup_path "$OTHER"
   wait_for test -s "$TMP/stubborn.pid"
   open_picker
-  press "'stubborn"
+  search "'stubborn"
   wait_for screen_has '1/'
   press '\x18'
   check 'ctrl-x stops an agent even if it ignores the hang-up' process_gone "$(cat "$TMP/stubborn.pid")"
@@ -526,7 +543,7 @@ else
   open_picker
   # Typing "main" keeps the agent's row and shows whether the reopened picker
   # gets keys at all, apart from whether ctrl-x then stops the agent.
-  press 'main'
+  search 'main'
   check 'the reopened picker gets keys' screen_has '> main'
   press '\x18'
   if ! check 'ctrl-x stops that agent' process_gone "$loose_pid"; then
@@ -581,7 +598,14 @@ EOF
   check 'the preview follows the agent live' ticks_past "${first_tick:-0}"
   if fzf_has_timer; then
     check '... several times a second' preview_keeps_up
+    # fzf 0.59 and later show the count, and the spinner with it, only in
+    # search mode.
+    if fzf_at_least 0 59; then press '/'; fi
     check 'the loading spinner only shows during a refresh' mostly_idle_spinner
+    if fzf_at_least 0 59; then
+      press '\x1b'
+      wait_for nav_mode # two escapes at once would read as alt-esc
+    fi
   fi
   press '\x1b'
   wait_for no_picker
@@ -596,7 +620,7 @@ EOF
     press '\x02a'
     wait_for no_popup
     open_picker
-    check 'the picker starts in nav mode' screen_has 'nav>'
+    check 'the picker starts in nav mode' nav_mode
     check '... and says which keys do what' screen_has 'j/k: move'
     wait_for screen_has '● idle     Copilot'
     press 'j'
@@ -618,15 +642,23 @@ EOF
     press "'Copilot" # exact; fuzzy would also hit the long temp paths
     check '... which filters' screen_has '1/2'
     press '\x1b'
-    check 'esc goes back to nav mode' screen_has 'nav>'
-    check '... and keeps the filter' screen_has '1/2'
+    check 'esc goes back to nav mode' nav_mode
+    check '... and keeps the filter' rows_are 1
+    if fzf_at_least 0 59; then
+      check '... which the header shows' screen_has "filter: 'Copilot"
+    fi
     press 'q'
     check 'q closes the picker' no_picker
     open_picker
     press 'x'
-    check 'typing any other key starts a search' screen_has 'search>'
-    press '\x1b'
-    wait_for screen_has 'nav>'
+    if fzf_at_least 0 59; then
+      sleep 0.3
+      check 'typing any other key leaves the input line hidden' nav_mode
+    else
+      check 'typing any other key starts a search' screen_has 'search>'
+      press '\x1b'
+      wait_for screen_has 'nav>'
+    fi
     press 'h'
     check 'h closes the picker' no_picker
   else
