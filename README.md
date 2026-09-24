@@ -19,6 +19,8 @@ Inspired by [craftzdog/tmux-claude-hatch](https://github.com/craftzdog/tmux-clau
   newer for its j/k navigation)
 - [jq](https://jqlang.org), optional, for Claude Code's own status in the
   picker
+- perl, for agents' colours with `@agent_popup_transparent on` (macOS and
+  most Linux systems come with it)
 
 ## Install
 
@@ -203,8 +205,11 @@ set -g @agent_popup_claude_cmd 'claude --dangerously-skip-permissions'
 Agent panes are filled with your terminal's background colour, so that agents
 asking for it get an answer (see Notes), and the terminal draws a filled
 background solid. With `on` the background is left to the terminal, and shows
-through as elsewhere; agents asking for it get no answer and use their own
-defaults, which can leave parts of their screens they'd shade flat.
+through as elsewhere. tmux can't answer for a background it doesn't draw, so
+the plugin answers agents asking for it with your terminal's, and they look
+as they do in an ordinary pane. That needs perl; without it they get no
+answer and use their own defaults: Copilot falls back to plain colours, and
+Codex leaves its prompt unshaded.
 
 The frame of the popups and the agent menu, title included, is in your
 terminal's green. `@agent_popup_border_style` takes any tmux style, e.g.

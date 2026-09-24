@@ -74,11 +74,13 @@ SOCKET="$(t display-message -p '#{socket_path}')"
 
 # A stand-in agent that, like Codex or OpenCode, asks the terminal for its
 # background colour when it starts, and like Copilot for a palette colour,
-# and records the answers. The second read waits out a missing answer.
+# and records the answers. They can come one at a time (the plugin answers
+# for the background after tmux answers for the palette, with
+# @agent_popup_transparent), so it reads twice, waiting up to 2s each time.
 cat >"$TMP/shade" <<'EOF'
 #!/bin/sh
 old="$(stty -g)"
-stty raw -echo min 0 time 5
+stty raw -echo min 0 time 20
 printf '\033]11;?\033\\\033]4;10;?\033\\'
 dd bs=256 count=2 2>/dev/null >"$(dirname "$0")/shade.reply"
 stty "$old"
@@ -282,6 +284,11 @@ preview_matches() { preview_of "$1" "$2" | grep -qE -- "$3"; }
 ring_bell() { printf '\a' >"$(t display-message -p -t "=$1:" '#{pane_tty}')"; }
 colours_cached() { [ "$(t show-options -gv @agent_popup_colours)" = "$1" ]; }
 pane_style_is() { [ "$(t show-options -pv -t "=$(session_for "$1"):" window-style)" = "$2" ]; }
+# answering_pipe <agent> / no_answering_pipe <agent>: whether the plugin's
+# pipe that answers for the background (scripts/answer-background) is on the
+# agent's pane.
+answering_pipe() { [ "$(t display-message -p -t "=$(session_for "$1"):" '#{pane_pipe}#{@agent_popup_answering}')" = 1on ]; }
+no_answering_pipe() { [ "$(t display-message -p -t "=$(session_for "$1"):" '#{pane_pipe}#{@agent_popup_answering}')" = 0 ]; }
 palette_cached() { [ "$(t show-options -gv @agent_popup_palette)" = "$1" ]; }
 # tmux_at_least <major> <minor>: prints "yes" if the server's tmux is that
 # version or newer ("3.4", "3.7c", "next-3.8").
@@ -343,9 +350,28 @@ wait_for no_popup
 t kill-session -t "=$(session_for shade)"
 check "an agent pane gets the terminal's colours as its style" pane_style_is claude 'fg=#dcd7ba,bg=#1f1f28'
 t set -g @agent_popup_transparent on
+rm -f "$TMP/shade.reply"
+press '\x02A'
+wait_for screen_has 'Agents'
+press '5'
+check '... without the background, with @agent_popup_transparent' pane_style_is shade 'fg=#dcd7ba'
+# tmux can't answer for a background it doesn't draw; the plugin does.
+check "... yet an agent asking for the background gets the terminal's" \
+  grep -q ']11;rgb:1f1f/1f1f/2828' "$TMP/shade.reply"
+press '\x02a'
+wait_for no_popup
+t set -gu @agent_popup_transparent
+press '\x02a' # the agent used last here: the stand-in
+wait_for popup_on shade
+check '... from a pipe that stops when the option goes off' no_answering_pipe shade
+press '\x02a'
+wait_for no_popup
+t kill-session -t "=$(session_for shade)"
+t set -g @agent_popup_transparent on
 press '\x02a' # and bring Claude Code back for the next section
 wait_for popup_on claude
-check '... without the background, with @agent_popup_transparent' pane_style_is claude 'fg=#dcd7ba'
+check '... and starts for agents already running when it comes on' answering_pipe claude
+check '... which lose the background too' pane_style_is claude 'fg=#dcd7ba'
 t set -gu @agent_popup_transparent
 
 echo "toggle"

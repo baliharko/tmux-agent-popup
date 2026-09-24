@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Answers an agent's questions for the terminal's background colour (OSC 11)
+# with <colour>, for a pane whose style has no background, which tmux can't
+# answer for (see @agent_popup_transparent in open-agent). Run through
+# pipe-pane -I -O: reads what the agent writes, and what it prints goes to
+# the agent as if the terminal had answered. The answer ends as the question
+# did, with BEL or ST, as tmux's own answers do.
+#
+#   answer-background <colour>   colour as rgb:rrrr/gggg/bbbb
+#
+# Perl, to read the agent's output as it comes in, a block at a time; a
+# question cut off at the end of a block is kept for the next one.
+exec perl -e '
+  my $colour = shift;
+  my $buf = "";
+  while (sysread(STDIN, $buf, 65536, length $buf)) {
+    my $done = 0;
+    while ($buf =~ /\e\]11;\?(\a|\e\\)/g) {
+      syswrite(STDOUT, "\e]11;$colour$1");
+      $done = pos $buf;
+    }
+    # A question cut off has at most 7 bytes: ESC ] 1 1 ; ? ESC
+    my $keep = length($buf) - 7;
+    $keep = $done if $keep < $done;
+    $buf = substr($buf, $keep > 0 ? $keep : 0);
+  }
+' "$1"

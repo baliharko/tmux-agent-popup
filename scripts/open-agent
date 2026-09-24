@@ -27,10 +27,22 @@ session="$(session_name "$agent" "$dir")"
 colours="$(terminal_colours "$client")"
 # tmux fills every cell of a pane whose style has a background, and a
 # see-through terminal draws cells with a background of their own solid. So
-# with @agent_popup_transparent the background is left to the terminal, and
-# agents asking for it get no answer. The foreground has no such effect.
+# with @agent_popup_transparent the background is left to the terminal. The
+# foreground has no such effect.
+#
+# tmux can't answer for a background it doesn't draw, and without an answer
+# some agents fall back to plain colours (Copilot drops its whole theme). So
+# answer-background, next to this file, answers in tmux's place: it reads the
+# agent's output through pipe-pane, and answers questions for the background
+# with the terminal's. It needs perl; without it, agents get no answer.
+answer=''
 if [ "$(get_option @agent_popup_transparent off)" = on ]; then
+  bg="${colours##*,bg=#}"
   colours="${colours%,bg=*}"
+  # As tmux answers: rgb:rrrr/gggg/bbbb, each byte twice.
+  if [[ "$bg" =~ ^[0-9a-fA-F]{6}$ ]] && command -v perl >/dev/null 2>&1; then
+    answer="rgb:${bg:0:2}${bg:0:2}/${bg:2:2}${bg:2:2}/${bg:4:2}${bg:4:2}"
+  fi
 fi
 colouring=()
 [ -n "$colours" ] && colouring=(\; set-option -p -t "=$session:" window-style "$colours")
@@ -39,6 +51,12 @@ for colour in $(terminal_palette); do
   colouring+=(\; set-option -p -t "=$session:" "pane-colours[$i]" "$colour")
   i=$((i + 1))
 done
+# pipe-pane runs its command with the shell, after expanding formats in it.
+# @agent_popup_answering tells the plugin's pipe from one of your own.
+answering=()
+[ -n "$answer" ] && answering=(\; pipe-pane -I -O -t "=$session:"
+  "exec #{q:@agent_popup_dir}/scripts/answer-background $answer" \;
+  set-option -p -t "=$session:" @agent_popup_answering on)
 
 if ! tmux has-session -t "=$session" 2>/dev/null; then
   cmd="$(agent_option "$agent" cmd)"
@@ -52,7 +70,8 @@ if ! tmux has-session -t "=$session" 2>/dev/null; then
     fi
     ;;
   esac
-  tmux new-session -d -s "$session" -c "$dir" "$cmd" ${colouring[@]+"${colouring[@]}"}
+  tmux new-session -d -s "$session" -c "$dir" "$cmd" ${colouring[@]+"${colouring[@]}"} \
+    ${answering[@]+"${answering[@]}"}
 fi
 
 # Set on every open, so config changes reach sessions that already exist.
@@ -76,6 +95,16 @@ if ! tmux set-option -t "$target" @agent_popup_agent "$agent" \; \
   tmux kill-session -t "=$session" 2>/dev/null
   tmux display-message -c "$client" "agent-popup: $label exited straight away"
   exit 0
+fi
+
+# The answering pipe likewise: started for a session made without it,
+# stopped once @agent_popup_transparent is off. A pipe of your own is left
+# alone.
+piping="$(tmux display-message -p -t "$target" '#{pane_pipe}#{@agent_popup_answering}')"
+if [ -n "$answer" ] && [ "${piping:0:1}" = 0 ]; then
+  tmux "${answering[@]:1}"
+elif [ -z "$answer" ] && [ "$piping" = 1on ]; then
+  tmux pipe-pane -t "$target" \; set-option -p -u -t "$target" @agent_popup_answering
 fi
 
 # A popup closed by a navigation key (scripts/passthrough, display-popup -C)

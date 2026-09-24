@@ -10,8 +10,9 @@
   dark bar, and the current row is highlighted across its whole width.
 - `@agent_popup_transparent on` leaves agent panes' background to the
   terminal, for a see-through one: filled with the terminal's background
-  colour, they came out solid. Agents asking for the background then get
-  no answer.
+  colour, they came out solid. Agents asking for the background still get
+  the terminal's, from the plugin rather than tmux (with perl), so Copilot
+  keeps its theme and markdown styling, and Codex its shaded prompt.
 - `prefix c` inside a popup closes it and opens the new window under it,
   as `prefix n` moves there, instead of adding a window to the agent's
   session. `c` is now in `@agent_popup_passthrough_keys` by default.
