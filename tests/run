@@ -272,6 +272,7 @@ tmux_at_least() {
     awk -F. -v M="$1" -v m="$2" '$1 > M || ($1 == M && $2 + 0 >= m) { print "yes" }'
 }
 windows_in_main() { [ "$(t list-windows -t main | wc -l | tr -d ' ')" = "$1" ]; }
+windows_in_session() { [ "$(t list-windows -t "=$(session_for "$1"):" | wc -l | tr -d ' ')" = "$2" ]; }
 process_gone() { ! kill -0 "$1" 2>/dev/null; }
 window_is() { [ "$(t display-message -p -t main: '#{window_index}')" = "$1" ]; }
 wrapped_keys() { [ "$(t list-keys -T prefix | grep -c 'scripts/passthrough')" -eq "$1" ]; }
@@ -631,9 +632,9 @@ EOF
 fi
 
 echo "navigation keys"
-check 'only bound keys are wrapped' wrapped_keys 18
+check 'only bound keys are wrapped' wrapped_keys 19
 load_plugin
-check 'loading the plugin again wraps nothing twice' wrapped_keys 18
+check 'loading the plugin again wraps nothing twice' wrapped_keys 19
 t new-window -d -t main:1 2>/dev/null # exists if the picker tests ran
 t new-window -d -t main:5
 goto select-window -t main:0
@@ -658,6 +659,13 @@ wait_for popup_on claude
 press '\x025'
 check 'prefix 5 selects window 5 underneath' window_is 5
 check '... and the agent keeps running' has_session claude
+goto select-window -t main:0
+press '\x02a'
+wait_for popup_on claude
+press '\x02c'
+check 'prefix c inside the popup closes it' no_popup
+check '... and opens a window underneath' window_is 2
+check '... not in the agent session' windows_in_session claude 1
 settle
 check 'closing popups this way reports no errors' no_view_mode
 

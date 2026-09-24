@@ -46,16 +46,17 @@ if [ -n "$root_key" ]; then
   bind_script root "$root_key" toggle
 fi
 
-# Navigation keys pressed inside an agent popup act on the window under it:
-# the popup closes and the key does what it normally does there. Each key's
-# own binding is copied as-is into the agent-popup-keys table (list-keys
-# prints re-sourceable lines, so quoting and multi-command bindings survive),
-# and the prefix binding is replaced by one that replays the key through that
-# table: straight away in a normal pane, via scripts/passthrough in an agent
-# session. Unbound keys are left alone.
+# Navigation keys, and c for a new window, pressed inside an agent popup act
+# on the window under it: the popup closes and the key does what it normally
+# does there. Each key's own binding is copied as-is into the
+# agent-popup-keys table (list-keys prints re-sourceable lines, so quoting
+# and multi-command bindings survive), and the prefix binding is replaced by
+# one that replays the key through that table: straight away in a normal
+# pane, via scripts/passthrough in an agent session. Unbound keys are left
+# alone.
 bindings="$(tmux list-keys -T prefix)"
 copied="$(mktemp)"
-for key in $(get_option @agent_popup_passthrough_keys '0 1 2 3 4 5 6 7 8 9 n p l w s ( ) h j k'); do
+for key in $(get_option @agent_popup_passthrough_keys '0 1 2 3 4 5 6 7 8 9 c n p l w s ( ) h j k'); do
   line="$(printf '%s\n' "$bindings" |
     awk -v k="$key" '{ i = 2; if ($i == "-r") i++ } $i == "-T" && $(i + 2) == k')"
   case "$line" in

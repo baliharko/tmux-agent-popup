@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `prefix c` inside a popup closes it and opens the new window under it,
+  as `prefix n` moves there, instead of adding a window to the agent's
+  session. `c` is now in `@agent_popup_passthrough_keys` by default.
 - Popups and the agent menu have a green frame: the terminal's green,
   title included. `@agent_popup_border_style` sets another style, or
   `default` for tmux's own `popup-border-style` and `menu-border-style`.

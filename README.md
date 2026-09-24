@@ -157,10 +157,13 @@ running, since it asks Claude Code for its status.
 
 Window and pane keys pressed inside the popup act on the window under it:
 `prefix n` closes the popup and moves to the next window, `prefix 3` to
-window 3. Whatever these keys are bound to in your config still applies. By
-default that's `0`–`9` and `n p l w s ( ) h j k`; set
-`@agent_popup_passthrough_keys` to change the list. Other keys keep working
-inside the popup, e.g. `prefix [` to scroll back through the agent's output.
+window 3, and `prefix c` opens a new window there rather than in the agent's
+session. Whatever these keys are bound to in your config still applies, so
+a `new-window -c "#{pane_current_path}"` starts in the directory of the pane
+under the popup. The keys are `0`–`9` and `c n p l w s ( ) h j k` by
+default; set `@agent_popup_passthrough_keys` to change the list. Other keys
+keep working inside the popup, e.g. `prefix [` to scroll back through the
+agent's output.
 
 ## Options
 
@@ -174,7 +177,7 @@ set -g @agent_popup_height     '90%'
 set -g @agent_popup_border     'rounded'  # any popup-border-lines value
 set -g @agent_popup_border_style 'fg=green' # frame and title colour
 set -g @agent_popup_status     'off'      # status bar inside the popup
-set -g @agent_popup_passthrough_keys '0 1 2 3 4 5 6 7 8 9 n p l w s ( ) h j k'
+set -g @agent_popup_passthrough_keys '0 1 2 3 4 5 6 7 8 9 c n p l w s ( ) h j k'
 
 set -g @agent_popup_claude_cmd  'claude'
 set -g @agent_popup_codex_cmd   'codex'
