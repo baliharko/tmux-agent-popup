@@ -264,6 +264,7 @@ preview_matches() { preview_of "$1" "$2" | grep -qE -- "$3"; }
 # ring_bell <session>: the agent in <session> rings the terminal bell.
 ring_bell() { printf '\a' >"$(t display-message -p -t "=$1:" '#{pane_tty}')"; }
 colours_cached() { [ "$(t show-options -gv @agent_popup_colours)" = "$1" ]; }
+pane_style_is() { [ "$(t show-options -pv -t "=$(session_for "$1"):" window-style)" = "$2" ]; }
 palette_cached() { [ "$(t show-options -gv @agent_popup_palette)" = "$1" ]; }
 # tmux_at_least <major> <minor>: prints "yes" if the server's tmux is that
 # version or newer ("3.4", "3.7c", "next-3.8").
@@ -323,8 +324,12 @@ fi
 press '\x02a'
 wait_for no_popup
 t kill-session -t "=$(session_for shade)"
+check "an agent pane gets the terminal's colours as its style" pane_style_is claude 'fg=#dcd7ba,bg=#1f1f28'
+t set -g @agent_popup_transparent on
 press '\x02a' # and bring Claude Code back for the next section
 wait_for popup_on claude
+check '... without the background, with @agent_popup_transparent' pane_style_is claude 'fg=#dcd7ba'
+t set -gu @agent_popup_transparent
 
 echo "toggle"
 press '\x02a'

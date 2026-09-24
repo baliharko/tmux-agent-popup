@@ -177,6 +177,7 @@ set -g @agent_popup_height     '90%'
 set -g @agent_popup_border     'rounded'  # any popup-border-lines value
 set -g @agent_popup_border_style 'fg=green' # frame and title colour
 set -g @agent_popup_status     'off'      # status bar inside the popup
+set -g @agent_popup_transparent 'off'     # 'on' for a see-through terminal
 set -g @agent_popup_passthrough_keys '0 1 2 3 4 5 6 7 8 9 c n p l w s ( ) h j k'
 
 set -g @agent_popup_claude_cmd  'claude'
@@ -194,6 +195,13 @@ Commands can include arguments or wrappers:
 ```tmux
 set -g @agent_popup_claude_cmd 'claude --dangerously-skip-permissions'
 ```
+
+`@agent_popup_transparent` is for a terminal with a see-through background.
+Agent panes are filled with your terminal's background colour, so that agents
+asking for it get an answer (see Notes), and the terminal draws a filled
+background solid. With `on` the background is left to the terminal, and shows
+through as elsewhere; agents asking for it get no answer and use their own
+defaults, which can leave parts of their screens they'd shade flat.
 
 The frame of the popups and the agent menu, title included, is in your
 terminal's green. `@agent_popup_border_style` takes any tmux style, e.g.

@@ -25,6 +25,13 @@ session="$(session_name "$agent" "$dir")"
 # instead; they look the same. Set in the same command as the session, so
 # they're in place before the agent's first question.
 colours="$(terminal_colours "$client")"
+# tmux fills every cell of a pane whose style has a background, and a
+# see-through terminal draws cells with a background of their own solid. So
+# with @agent_popup_transparent the background is left to the terminal, and
+# agents asking for it get no answer. The foreground has no such effect.
+if [ "$(get_option @agent_popup_transparent off)" = on ]; then
+  colours="${colours%,bg=*}"
+fi
 colouring=()
 [ -n "$colours" ] && colouring=(\; set-option -p -t "=$session:" window-style "$colours")
 i=0

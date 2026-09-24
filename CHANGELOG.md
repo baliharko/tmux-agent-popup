@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `@agent_popup_transparent on` leaves agent panes' background to the
+  terminal, for a see-through one: filled with the terminal's background
+  colour, they came out solid. Agents asking for the background then get
+  no answer.
 - `prefix c` inside a popup closes it and opens the new window under it,
   as `prefix n` moves there, instead of adding a window to the agent's
   session. `c` is now in `@agent_popup_passthrough_keys` by default.
