@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# "Local model" in the agent menu: an agent on a model served by ollama on
+# your own machine, started with `ollama launch`. First a menu of the agents
+# (local_agents in helpers.sh), then one of the models downloaded, the one
+# used last first. An agent already running here on a local model is marked,
+# with its model, and picking it reopens it (open-agent).
+#
+#   choose-local <client> <pane>            the agents
+#   choose-local <client> <pane> <agent>    the models, for <agent>
+set -u
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=helpers.sh
+. "$DIR/helpers.sh"
+
+client="$1" pane="$2" agent="${3:-}"
+
+dir="$(tmux display-message -p -t "$pane" '#{pane_current_path}')"
+[ -n "$dir" ] || exit 0
+
+# say <message>: a message on the client. It's a format, so # is doubled.
+say() { tmux display-message -c "$client" "agent-popup: ${1//\#/##}"; }
+
+# As in choose-agent: the menu expands each command as a format and run-shell
+# expands it again, so ## reaches run-shell as #. client and pane are tty
+# paths and %ids, and model names are checked below, safe to paste.
+if [ -z "$agent" ]; then
+  running=" $(dir_agents "$dir" | tr '\n' ' ') "
+  items=()
+  n=0
+  for agent in $(local_agents); do
+    n=$((n + 1))
+    label="$(agent_option "$agent" label)"
+    item="  ${label//\#/##}"
+    case "$running" in
+    *" $agent+local "*)
+      model="$(tmux display-message -p -t "=$(session_name "$agent+local" "$dir"):" '#{@agent_popup_model}')"
+      item="#[fg=green]●#[default] ${label//\#/##}  #[dim]${model//\#/##}#[default]"
+      ;;
+    esac
+    key=''
+    [ "$n" -le 9 ] && key="$n"
+    items+=("$item" "$key" \
+      "run-shell -b \"##{q:@agent_popup_dir}/scripts/open-agent $agent+local $client $pane\"")
+  done
+  [ "$n" -gt 0 ] || exit 0
+  show_menu "$client" "$pane" 'Local model' "${items[@]}"
+  exit 0
+fi
+
+if ! command -v ollama >/dev/null 2>&1; then
+  say 'ollama not found'
+  exit 0
+fi
+if ! list="$(ollama list 2>&1)"; then
+  say "$(printf '%s\n' "$list" | head -n 1)"
+  exit 0
+fi
+
+# The model names, below the header. Ollama's are letters, digits and
+# ._:/-, which need no quoting; anything else is left out, and so is a name
+# starting with -, which the menu would show disabled.
+last="$(get_option @agent_popup_last_model '')"
+models="$(printf '%s\n' "$list" | awk 'NR > 1 && $1 ~ /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/ { print $1 }')"
+if [ -z "$models" ]; then
+  say 'no ollama models; download one with ollama pull'
+  exit 0
+fi
+if printf '%s\n' "$models" | grep -qxF -- "$last"; then
+  models="$(printf '%s\n' "$last" "$models" | awk '!seen[$0]++')"
+fi
+
+items=()
+n=0
+for model in $models; do
+  n=$((n + 1))
+  key=''
+  [ "$n" -le 9 ] && key="$n"
+  items+=("$model" "$key" \
+    "run-shell -b \"##{q:@agent_popup_dir}/scripts/open-agent $agent+local $client $pane $model\"")
+done
+show_menu "$client" "$pane" "$(agent_label "$agent" model)" "${items[@]}"

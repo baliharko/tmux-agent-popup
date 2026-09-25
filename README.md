@@ -62,6 +62,21 @@ already running there are marked with `●`. Once several are running,
 Quitting the agent itself closes the popup and ends its session. `prefix d`
 also hides the popup.
 
+### Local models
+
+With [ollama](https://ollama.com) installed, the `prefix A` menu ends with
+**Local model ›**, for an agent running on a model on your own machine. It
+asks which agent, then which of the models you've downloaded (`ollama
+list`), the one you used last first, and starts the agent with `ollama
+launch <agent> --model <model>`.
+
+An agent on a local model has a session of its own, so it runs next to the
+agent's usual one in the same directory. Its popup is titled with the model
+(`Copilot · qwen3.5:35b-a3b-coding-nvfp4`), and the picker shows it after
+the agent's name. `prefix a` reopens it like any other agent; to switch
+models, quit the agent and pick another. While one runs, the menus mark it
+with `●`, and picking it again reopens it without asking for a model.
+
 ### Session picker
 
 `prefix u` lists every running agent with a live preview of its screen: the
@@ -189,6 +204,9 @@ set -g @agent_popup_claude_cmd  'claude'
 set -g @agent_popup_codex_cmd   'codex'
 set -g @agent_popup_copilot_cmd 'copilot'
 set -g @agent_popup_opencode_cmd 'opencode'
+
+set -g @agent_popup_local_agents 'claude codex copilot opencode' # under Local model
+set -g @agent_popup_local_cmd    'ollama launch'
 ```
 
 `@agent_popup_root_key` binds the toggle without the prefix. The key is then
@@ -200,6 +218,13 @@ Commands can include arguments or wrappers:
 ```tmux
 set -g @agent_popup_claude_cmd 'claude --dangerously-skip-permissions'
 ```
+
+`@agent_popup_local_agents` lists the agents offered under Local model. By
+default it's the built-in agents you have in `@agent_popup_agents`, which
+`ollama launch` can all start; add others it can launch (e.g. `pi` or
+`qwen`) by name. `@agent_popup_local_cmd` is the start of their command,
+followed by the agent and `--model <model>`, and takes wrappers like the
+others: `'direnv exec . ollama launch'`.
 
 `@agent_popup_transparent` is for a terminal with a see-through background.
 Agent panes are filled with your terminal's background colour, so that agents

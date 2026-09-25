@@ -28,12 +28,39 @@ agent_option() {
   get_option "@agent_popup_$1_$2" "$(agent_default "$1" "$2")"
 }
 
+# agent_label <agent> [<model>]
+# An agent's name for titles and messages. <agent> can be one on a local
+# model ("copilot+local", see local_agents), which is named after its own
+# agent and the model: "Copilot · qwen3".
+agent_label() {
+  local label
+  label="$(agent_option "${1%+local}" label)"
+  printf '%s' "$label${2:+ · $2}"
+}
+
 # configured_agents
 # The names in @agent_popup_agents, one per line, skipping any that can't be
 # used in option and session names.
 configured_agents() {
   local agent
   for agent in $(get_option @agent_popup_agents 'claude codex copilot opencode'); do
+    case "$agent" in
+    *[!A-Za-z0-9_-]*) continue ;;
+    esac
+    printf '%s\n' "$agent"
+  done
+}
+
+# local_agents
+# The agents offered on a local model, one per line: the names in
+# @agent_popup_local_agents, or else the configured agents that
+# `ollama launch` can start. Such an agent runs as "<agent>+local", in a
+# session of its own next to the agent's usual one.
+local_agents() {
+  local agent list
+  list="$(get_option @agent_popup_local_agents '')"
+  [ -n "$list" ] || list="$(configured_agents | grep -xE 'claude|codex|copilot|opencode')"
+  for agent in $list; do
     case "$agent" in
     *[!A-Za-z0-9_-]*) continue ;;
     esac
@@ -182,6 +209,18 @@ show_popup() {
     "$@"
 }
 
+# show_menu <client> <pane> <title> <display-menu items...>
+# A menu in the middle of the screen, framed like the popups.
+show_menu() {
+  local client="$1" pane="$2" title="$3"
+  shift 3
+  tmux display-menu -c "$client" -t "$pane" -x C -y C \
+    -b "$(get_option @agent_popup_border rounded)" \
+    -S "$(border_style)" \
+    -T "$(titled "$title")" \
+    "$@"
+}
+
 # show_agent_popup <client> <session> <title>
 # An agent's <session> in a popup on <client>, attached by attach-agent, next
 # to this file. Blocks until it closes. The popup's command finds the script
@@ -194,8 +233,9 @@ show_agent_popup() {
 }
 
 # session_name <agent> <dir>
-# One session per agent + directory: agent-<agent>-<basename>-<crc of path>.
-# The basename is only there for humans. tmux reads . and : in a target as
+# One session per agent + directory: agent-<agent>-<basename>-<crc of path>,
+# where <agent> can be one on a local model, e.g. "copilot+local". The
+# basename is only there for humans. tmux reads . and : in a target as
 # window/pane separators, so anything outside [A-Za-z0-9_-] becomes _.
 session_name() {
   local base crc

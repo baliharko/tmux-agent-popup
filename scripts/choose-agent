@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Show a menu of the configured agents for the pane's directory. Agents already
-# running there are marked. Inside an agent popup it dismisses the popup
-# instead, like the toggle key.
+# running there are marked. With ollama installed, the menu ends with "Local
+# model", for an agent on a model of your own (choose-local). Inside an agent
+# popup it dismisses the popup instead, like the toggle key.
 #
 #   choose-agent <client> <pane>
 set -u
@@ -36,8 +37,18 @@ for agent in $(configured_agents); do
 done
 [ "$n" -gt 0 ] || exit 0
 
-tmux display-menu -c "$client" -t "$pane" -x C -y C \
-  -b "$(get_option @agent_popup_border rounded)" \
-  -S "$(border_style)" \
-  -T "$(titled Agents)" \
-  "${items[@]}"
+# Below a separator (an item with no name): agents on a local model, marked
+# while one runs here.
+if command -v ollama >/dev/null 2>&1 && [ -n "$(local_agents)" ]; then
+  n=$((n + 1))
+  case "$running" in
+  *"+local "*) mark='#[fg=green]●#[default]' ;;
+  *) mark=' ' ;;
+  esac
+  key=''
+  [ "$n" -le 9 ] && key="$n"
+  items+=('' "$mark Local model ›" "$key" \
+    "run-shell -b \"##{q:@agent_popup_dir}/scripts/choose-local $client $pane\"")
+fi
+
+show_menu "$client" "$pane" Agents "${items[@]}"

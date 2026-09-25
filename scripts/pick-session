@@ -199,12 +199,17 @@ agent_state() {
 
 # record <order> <recency> <kind> <target> <pid> <agent> <tty> <bell> <note> <directory>
 # One agent's row data, with everything that takes a tmux call looked up:
-# its label and what its screen says (screen_state). Fields are separated
-# by \037, the directory last.
+# its label, the model of one on a local model (see local_agents), and what
+# its screen says (screen_state). Fields are separated by \037, the
+# directory last.
 record() {
-  local screen
+  local screen model=''
   screen="$(screen_state "$(target_of "$3" "$4")")"
-  printf '%s\037' "$1" "$2" "$3" "$4" "$5" "$(agent_option "$6" label)" "$screen" "$7" "$8" "$9"
+  case "$6" in
+  *+local) model="$(tmux display-message -p -t "=$4:" '#{@agent_popup_model}' 2>/dev/null)" ;;
+  esac
+  printf '%s\037' "$1" "$2" "$3" "$4" "$5" "$(agent_option "${6%+local}" label)" "$model" \
+    "$screen" "$7" "$8" "$9"
   printf '%s\n' "${10}"
 }
 
@@ -252,11 +257,18 @@ load_records() {
 # panes. quick (see load_records) is for the first list the picker shows;
 # the full one replaces it right after.
 list_rows() {
-  local order recency kind target pid label screen tty bell note dir status place
+  local order recency kind target pid label model screen tty bell note dir status place
+  local name width=12
   load_records "${1:-}"
   [ -n "$RECORDS" ] || return 0
+  # The agent's name, with the model of one on a local model, in a column
+  # as wide as the longest.
+  while IFS=$'\037' read -r _ _ _ _ _ label model _; do
+    name="$label${model:+ $model}"
+    [ "${#name}" -lt "$width" ] || width=$((${#name} + 1))
+  done <<<"$RECORDS"
   printf '%s\n' "$RECORDS" |
-    while IFS=$'\037' read -r order recency kind target pid label screen tty bell note dir; do
+    while IFS=$'\037' read -r order recency kind target pid label model screen tty bell note dir; do
       case "$(agent_state "$screen" "$tty" "$bell")" in
       working) status=$'\033[33m●\033[0m working' ;;
       waiting) status=$'\033[1;31m●\033[0m \033[1mwaiting\033[0m' ;;
@@ -266,11 +278,13 @@ list_rows() {
       "$HOME" | "$HOME"/*) place="~${dir#"$HOME"}" ;;
       *) place="$dir" ;;
       esac
+      name="$label${model:+ $model}"
+      [ -z "$model" ] || label="$label "$'\033[2m'"$model"$'\033[0m'
       # The note ("open", or where a hand-started agent runs) goes before
       # the path, which fzf cuts off first when the line is too long.
-      printf '%s\t%s\t%s\t%s\t%s\t%s  %-12s \033[1m%-20s\033[0m %-10s \033[2m%s\033[0m\n' \
+      printf '%s\t%s\t%s\t%s\t%s\t%s  %s%*s \033[1m%-20s\033[0m %-10s \033[2m%s\033[0m\n' \
         "$order" "$recency" "$kind" "$target" "$pid" \
-        "$status" "$label" "${dir##*/}" "$note" "$place"
+        "$status" "$label" $((width - ${#name})) '' "${dir##*/}" "$note" "$place"
     done | sort -t $'\t' -k1,1n -k2,2nr | cut -f3-
 }
 
@@ -290,7 +304,7 @@ status_line() {
   local waiting=0 working=0 idle=0 line='' screen tty bell
   load_records
   [ -n "$RECORDS" ] || return 0
-  while IFS=$'\037' read -r _ _ _ _ _ _ screen tty bell _; do
+  while IFS=$'\037' read -r _ _ _ _ _ _ _ screen tty bell _; do
     case "$(agent_state "$screen" "$tty" "$bell")" in
     waiting) waiting=$((waiting + 1)) ;;
     working) working=$((working + 1)) ;;
@@ -357,10 +371,12 @@ case "${1:-}" in
   # titled with the agent's name. display-popup -C is immediate, so the new
   # popup never opens over one that's still closing.
   client="$2" session="$3"
-  agent="$(tmux display-message -p -t "=$session:" '#{@agent_popup_agent}' 2>/dev/null)"
+  # Neither has spaces.
+  read -r agent model <<<"$(tmux display-message -p -t "=$session:" \
+    '#{@agent_popup_agent} #{@agent_popup_model}' 2>/dev/null)"
   tmux display-popup -C -c "$client"
   [ -n "$agent" ] || exit 0 # it exited in the meantime
-  show_agent_popup "$client" "$session" "$(agent_option "$agent" label)" || : # see the end of open-agent
+  show_agent_popup "$client" "$session" "$(agent_label "$agent" "$model")" || : # see the end of open-agent
   exit 0
   ;;
 esac
@@ -443,6 +459,6 @@ fi
 # first. The picker waits here to be closed along with it: exiting would
 # close the popup too, and a popup opened while another is still closing can
 # come up without keyboard input. Client names are tty paths and session
-# names are [A-Za-z0-9_-], safe to paste.
+# names are [A-Za-z0-9_+-], safe to paste.
 tmux run-shell -b "#{q:@agent_popup_dir}/scripts/pick-session --open $client $target"
 exec sleep 5

@@ -52,6 +52,31 @@ cat >"$TMP/bin/claude" <<'EOF'
 cat "$(dirname "$0")/../claude-agents.json" 2>/dev/null || echo '[]'
 EOF
 chmod +x "$TMP/bin/claude"
+# A stand-in for ollama. `ollama list` prints ollama-list, or fails as ollama
+# does when its server isn't running if there's no such file; `ollama launch`
+# shows what it was asked to start.
+cat >"$TMP/bin/ollama" <<'EOF'
+#!/bin/sh
+case "$1" in
+list)
+  cat "$(dirname "$0")/../ollama-list" 2>/dev/null && exit 0
+  echo "Error: could not connect to ollama server, run 'ollama serve' to start it" >&2
+  exit 1
+  ;;
+launch)
+  shift
+  echo "ollama-launch $*"
+  exec sleep 600
+  ;;
+esac
+EOF
+chmod +x "$TMP/bin/ollama"
+cat >"$TMP/ollama-list" <<'EOF'
+NAME                            ID              SIZE     MODIFIED
+qwen3.5:35b-a3b-coding-nvfp4    6e73b30f8f1c    21 GB    33 minutes ago
+gpt-oss:20b                     17052f91a42e    13 GB    4 weeks ago
+bad#model:1                     0123456789ab    1 GB     4 weeks ago
+EOF
 export PATH="$TMP/bin:$PATH"
 
 # Hostile globals the plugin has to override per session.
@@ -168,6 +193,7 @@ snap() {
   wait_for test -f "$TMP/snap"
 }
 screen_has() { snap && grep -qF -- "$1" "$TMP/snap"; }
+screen_lacks() { snap && ! grep -qF -- "$1" "$TMP/snap"; }
 # frame_is <colour>: the popup's or menu's frame is in <colour>, as pyte
 # names it ("green" for the terminal's green).
 frame_is() {
@@ -305,6 +331,11 @@ wrapped_keys() { [ "$(t list-keys -T prefix | grep -c 'scripts/passthrough')" -e
 # prints nothing on tmux 3.7.)
 wraps_with_pane() { t list-keys -T prefix | grep -F "scripts/passthrough #{q:client_name} '$1' #{q:pane_id}" >/dev/null; }
 in_dir() { [ "$(t display-message -p -t main: '#{pane_current_path}')" = "$1" ]; }
+# first_model_is <model>: of the stand-in's models, the menu lists <model>
+# first.
+first_model_is() {
+  snap && [ "$(grep -oE 'qwen3.5:35b-a3b-coding-nvfp4|gpt-oss:20b' "$TMP/snap" | head -n 1)" = "$1" ]
+}
 # Script failures and output show up in view mode, in whichever pane the key
 # was pressed in, not necessarily the current one.
 no_view_mode() { ! t list-panes -a -F '#{pane_in_mode}' | grep -q 1; }
@@ -434,6 +465,73 @@ press '4'
 check '... also without a global remain-on-exit' screen_has 'Broken exited straight away'
 check '... again leaving no session' no_session broken
 t set-option -g remain-on-exit on
+check 'no script output lands in the pane' no_view_mode
+
+echo "local models"
+press '\x02A'
+wait_for screen_has 'Agents'
+check 'with ollama installed, the menu ends with Local model' screen_has 'Local model ›'
+press '6'
+check '... which lists the agents ollama can launch' screen_has "$L Local model $R"
+check '... of the configured ones' screen_lacks 'Broken'
+press '3'
+check 'picking one asks for a model' screen_has "$L Copilot · model $R"
+check '... of the ones downloaded' screen_has 'qwen3.5:35b-a3b-coding-nvfp4'
+check '... leaving out names that would need quoting' screen_lacks 'bad#model'
+press '2'
+check 'the agent starts on that model, through ollama launch' \
+  screen_has 'ollama-launch copilot --model gpt-oss:20b'
+check '... in a popup titled with both' screen_has "$L Copilot · gpt-oss:20b $R"
+check '... in a session of its own' popup_on 'copilot+local'
+press '\x02a'
+wait_for no_popup
+press '\x02a'
+check 'prefix a reopens it' popup_on 'copilot+local'
+press '\x02a'
+wait_for no_popup
+if command -v fzf >/dev/null 2>&1; then
+  open_picker
+  check 'the picker names the model after the agent' screen_has 'Copilot gpt-oss:20b  my proj:x.nvim'
+  check '... and lines up the other rows with it' screen_has "Claude Code$(printf '%10s' '')my proj:x.nvim"
+  search "'gpt-oss"
+  sleep 0.3
+  press '\r'
+  check '... and opens it in a popup titled with both' screen_has "$L Copilot · gpt-oss:20b $R"
+  press '\x02a'
+  wait_for no_popup
+fi
+press '\x02A'
+wait_for screen_has 'Agents'
+check 'the menu marks Local model while one runs here' screen_has '● Local model'
+press '6'
+check '... and the agent, with its model' screen_has '● Copilot  gpt-oss:20b'
+press '3'
+check 'picking it again reopens it without asking for a model' popup_on 'copilot+local'
+check '... in the same session' sessions_named 'copilot+local' 1
+press '\x02a'
+wait_for no_popup
+press '\x02A'
+wait_for screen_has 'Agents'
+press '6'
+wait_for screen_has "$L Local model $R"
+press '1'
+wait_for screen_has "$L Claude Code · model $R"
+check 'the model used last comes first' first_model_is 'gpt-oss:20b'
+press '1'
+check 'an agent on a local model runs next to its usual session' popup_on 'claude+local'
+check '... leaving that one alone' sessions_named claude 1
+press '\x02a'
+wait_for no_popup
+t kill-session -t "=$(session_for 'claude+local')" \; kill-session -t "=$(session_for 'copilot+local')"
+mv "$TMP/ollama-list" "$TMP/ollama-list.off"
+press '\x02A'
+wait_for screen_has 'Agents'
+press '6'
+wait_for screen_has "$L Local model $R"
+press '3'
+check "ollama's own error is shown, e.g. when it isn't running" screen_has 'could not connect to ollama server'
+check '... and nothing starts' no_session 'copilot+local'
+mv "$TMP/ollama-list.off" "$TMP/ollama-list"
 check 'no script output lands in the pane' no_view_mode
 
 echo "agent session outside a popup"
@@ -760,7 +858,6 @@ snap2() {
 }
 screen2_has() { snap2 && grep -qF -- "$1" "$TMP/snap2"; }
 screen2_lacks() { snap2 && ! grep -qF -- "$1" "$TMP/snap2"; }
-screen_lacks() { snap && ! grep -qF -- "$1" "$TMP/snap"; }
 terminals_on_main() { [ "$(t list-clients -F '#{client_session}' | grep -cx main)" -eq "$1" ]; }
 popups_on() { [ "$(t list-clients -F '#{client_session}' | grep -c "^agent-$1-")" -eq "$2" ]; }
 wait_for terminals_on_main 2
