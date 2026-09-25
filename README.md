@@ -62,13 +62,20 @@ already running there are marked with `●`. Once several are running,
 Quitting the agent itself closes the popup and ends its session. `prefix d`
 also hides the popup.
 
+In the menu, press an item's number to pick it, or move with `j`/`k` or the
+arrow keys and pick with `l`, `→` or `enter`. `h` or `←` goes back to the
+menu before (see Local models), or closes the first one, as `q` and `esc`
+do. A mouse click picks too.
+
 ### Local models
 
 With [ollama](https://ollama.com) installed, the `prefix A` menu ends with
 **Local model ›**, for an agent running on a model on your own machine. It
 asks which agent, then which of the models you've downloaded (`ollama
 list`), the one you used last first, and starts the agent with `ollama
-launch <agent> --model <model>`.
+launch <agent> --model <model>`. `l` and `h` (or the arrow keys) go back
+and forth between the three menus, and numbers work in each: with the four
+built-in agents, `prefix A 5 3 1` starts Copilot on the first model.
 
 An agent on a local model has a session of its own, so it runs next to the
 agent's usual one in the same directory. Its popup is titled with the model
@@ -240,7 +247,8 @@ The frame of the popups and the agent menu, title included, is in your
 terminal's green. `@agent_popup_border_style` takes any tmux style, e.g.
 `fg=#7e9cd8`, or `default` to follow tmux's own `popup-border-style` and
 `menu-border-style`. The menu's other colours follow `menu-style` and
-`menu-selected-style`.
+`menu-selected-style`: the menus are the plugin's own, drawn in a popup
+like tmux's menus, since those can't be given keys.
 
 ## Adding an agent
 

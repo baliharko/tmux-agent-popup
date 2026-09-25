@@ -10,6 +10,15 @@
   the agent's usual one. Popups, the menus and the picker show the model.
   `@agent_popup_local_agents` and `@agent_popup_local_cmd` change which
   agents are offered and how they start.
+- The agent menu takes `h`/`l` and the left and right arrows: `l` or `→`
+  picks the highlighted item, like `enter`, and `h` or `←` goes back to the
+  menu before, on the item you came from (or closes the first menu). The
+  menus are now the plugin's own, drawn in a popup as tmux draws its menus,
+  since tmux's menus can't be given keys; numbers, `j`/`k`, the up and down
+  arrows, `esc` and mouse clicks work as before, and the colours still
+  follow `menu-style` and `menu-selected-style`. They also come up
+  quicker, so that keys typed in one go, like `prefix A 5 3 1`, reach each
+  menu in turn instead of the pane underneath.
 
 - Keys pressed in an agent popup act on the terminal it's shown on, also
   when two terminals on one session show the agent at once (a second

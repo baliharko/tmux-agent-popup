@@ -4,28 +4,66 @@
 # get_option <name> <default>
 # Prints the global tmux option, or <default> when it is unset or empty.
 get_option() {
-  local value
-  value="$(tmux show-option -gqv "$1")"
-  printf '%s' "${value:-$2}"
+  option_value "$1"
+  printf '%s' "${VALUE:-$2}"
+}
+
+# option_value <name>
+# Sets VALUE to the global tmux option, without a tmux call for one kept by
+# keep_option: for the menus, where the time each call takes shows. Kept
+# options are in variables named after them, OPT with @ as _a_ and - as _h_.
+option_value() {
+  local var="${1//-/_h_}"
+  var="OPT${var//@/_a_}"
+  if eval "[ -n \"\${$var+x}\" ]"; then
+    VALUE="${!var}"
+  else
+    VALUE="$(tmux show-option -gqv "$1")"
+  fi
+}
+
+# keep_option <name> <value>: for option_value.
+keep_option() {
+  local var="${1//-/_h_}"
+  eval "OPT${var//@/_a_}=\$2"
+}
+
+# load_options <name>...
+# Reads these options in one tmux call, as the format #{<name>} (the global
+# value, unless a session or window has its own), and keeps them.
+load_options() {
+  local cmds=() name value
+  for name in "$@"; do
+    [ "${#cmds[@]}" -eq 0 ] || cmds+=(\;)
+    cmds+=(display-message -p "#{$name}")
+  done
+  [ "${#cmds[@]}" -gt 0 ] || return 0
+  while [ "$#" -gt 0 ] && IFS= read -r value; do
+    keep_option "$1" "$value"
+    shift
+  done < <(tmux "${cmds[@]}")
 }
 
 # agent_default <agent> <field>
-# Built-in defaults. Any agent runs a command of the same name unless
-# configured otherwise, and is labelled with its name.
+# Sets DEFAULT to the built-in default. Any agent runs a command of the same
+# name unless configured otherwise, and is labelled with its name.
 agent_default() {
   case "$1:$2" in
-  claude:label) printf 'Claude Code' ;;
-  codex:label) printf 'Codex' ;;
-  copilot:label) printf 'Copilot' ;;
-  opencode:label) printf 'OpenCode' ;;
-  *:cmd | *:label) printf '%s' "$1" ;;
+  claude:label) DEFAULT='Claude Code' ;;
+  codex:label) DEFAULT='Codex' ;;
+  copilot:label) DEFAULT='Copilot' ;;
+  opencode:label) DEFAULT='OpenCode' ;;
+  *:cmd | *:label) DEFAULT="$1" ;;
+  *) DEFAULT='' ;;
   esac
 }
 
 # agent_option <agent> <field>
 # Reads @agent_popup_<agent>_<field>, falling back to agent_default.
 agent_option() {
-  get_option "@agent_popup_$1_$2" "$(agent_default "$1" "$2")"
+  local DEFAULT
+  agent_default "$1" "$2"
+  get_option "@agent_popup_$1_$2" "$DEFAULT"
 }
 
 # agent_label <agent> [<model>]
@@ -59,7 +97,13 @@ configured_agents() {
 local_agents() {
   local agent list
   list="$(get_option @agent_popup_local_agents '')"
-  [ -n "$list" ] || list="$(configured_agents | grep -xE 'claude|codex|copilot|opencode')"
+  if [ -z "$list" ]; then
+    for agent in $(configured_agents); do
+      case "$agent" in
+      claude | codex | copilot | opencode) list="$list $agent" ;;
+      esac
+    done
+  fi
   for agent in $list; do
     case "$agent" in
     *[!A-Za-z0-9_-]*) continue ;;
@@ -114,10 +158,10 @@ leave_agent_session() {
 # looked at (1 or 0), and its directory. The separator has to be printable:
 # tmux 3.4 prints control characters in -F output as escapes like \037.
 # Agent and session names can't contain ":"; the directory can, so it comes
-# last.
+# last. Other sessions give lines with no agent, which this leaves out.
+AGENT_SESSIONS_FORMAT='#{@agent_popup_agent}:#{session_name}:#{?session_last_attached,#{session_last_attached},0}:#{session_attached}:#{pane_tty}:#{window_bell_flag}:#{@agent_popup_path}'
 agent_sessions() {
-  tmux list-sessions -F '#{@agent_popup_agent}:#{session_name}:#{?session_last_attached,#{session_last_attached},0}:#{session_attached}:#{pane_tty}:#{window_bell_flag}:#{@agent_popup_path}' |
-    awk -F: '$1 != ""'
+  tmux list-sessions -F "$AGENT_SESSIONS_FORMAT" | awk -F: '$1 != ""'
 }
 
 # dir_agents <dir>
@@ -209,16 +253,151 @@ show_popup() {
     "$@"
 }
 
-# show_menu <client> <pane> <title> <display-menu items...>
-# A menu in the middle of the screen, framed like the popups.
+# colour_sgr <30|40> <colour>
+# Sets SGR to a tmux colour as SGR parameters, for the foreground (30) or
+# background (40): by name, number (colour0 to colour255) or #rrggbb.
+# Anything else is the terminal's default.
+colour_sgr() {
+  local base="$1" colour="$2" name i=0
+  case "$colour" in
+  bright*)
+    base=$((base + 60))
+    colour="${colour#bright}"
+    ;;
+  esac
+  for name in black red green yellow blue magenta cyan white; do
+    if [ "$colour" = "$name" ]; then
+      SGR=$((base + i))
+      return
+    fi
+    i=$((i + 1))
+  done
+  case "$colour" in
+  colour[0-9]* | color[0-9]*) SGR="$(($1 + 8));5;${colour#colo*r}" ;;
+  '#'[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])
+    SGR="$(($1 + 8));2;$((16#${colour:1:2}));$((16#${colour:3:2}));$((16#${colour:5:2}))"
+    ;;
+  *) SGR=$(($1 + 9)) ;;
+  esac
+}
+
+# style_sgr <style>
+# A tmux style as SGR parameters, e.g. "bg=yellow,fg=black" as "43;30": its
+# colours and attributes. Reverse video for a style with neither, so that
+# something shows.
+style_sgr() {
+  local part sgr='' IFS=', ' SGR
+  for part in $1; do
+    case "$part" in
+    fg=*) colour_sgr 30 "${part#fg=}" && sgr="$sgr;$SGR" ;;
+    bg=*) colour_sgr 40 "${part#bg=}" && sgr="$sgr;$SGR" ;;
+    bold | bright) sgr="$sgr;1" ;;
+    dim) sgr="$sgr;2" ;;
+    italics) sgr="$sgr;3" ;;
+    underscore) sgr="$sgr;4" ;;
+    blink) sgr="$sgr;5" ;;
+    reverse) sgr="$sgr;7" ;;
+    hidden) sgr="$sgr;8" ;;
+    strikethrough) sgr="$sgr;9" ;;
+    esac
+  done
+  sgr="${sgr#;}"
+  printf '%s' "${sgr:-7}"
+}
+
+# text_width <text>
+# Sets WIDTH to how wide <text> is on screen: without colours (ANSI codes),
+# and a column a character, however many bytes it takes (UTF-8's
+# continuation bytes are \200 to \277). Without a process, for the menus.
+text_width() {
+  local LC_ALL=C text="$1" before after
+  while [[ "$text" == *$'\033['* ]]; do
+    before="${text%%$'\033['*}" after="${text#*$'\033['}"
+    text="$before${after#*m}"
+  done
+  text="${text//[$'\200'-$'\277']/}"
+  WIDTH="${#text}"
+}
+
+# show_menu <client> <title> <start> [<key> <label>]...
+# A menu in a popup in the middle of the screen, framed like the agents'
+# popups and laid out like tmux's menus, run by the menu script next to this
+# file (see there for its keys). A label can have colours (ANSI codes), and
+# <key> picks it; an item with the key - and no label is a separator. The
+# highlight starts on item <start>, from 0. The colours follow tmux's
+# menu-style and menu-selected-style, and with @agent_popup_border_style
+# "default" the frame menu-border-style. Blocks until it closes, then sets
+# MENU_CHOICE to the number of the item picked, "back", or nothing if it
+# was closed. The terminal's size and the highlight's colours are kept, for
+# the next menu, in MENU_SIZE and MENU_SGR.
 show_menu() {
-  local client="$1" pane="$2" title="$3"
+  local client="$1" title="$2" start="$3" keys=() labels=() widths=() width=0 hints=0
+  local i inner hint pad row cols rows file frame border style sep='' WIDTH VALUE
   shift 3
-  tmux display-menu -c "$client" -t "$pane" -x C -y C \
-    -b "$(get_option @agent_popup_border rounded)" \
-    -S "$(border_style)" \
+  MENU_CHOICE=''
+  while [ "$#" -ge 2 ]; do
+    keys+=("$1")
+    labels+=("$2")
+    shift 2
+  done
+  [ "${#labels[@]}" -gt 0 ] || return 0
+  for i in "${!labels[@]}"; do
+    text_width "${labels[i]}"
+    widths+=("$WIDTH")
+    [ "$WIDTH" -le "$width" ] || width="$WIDTH"
+    case "${keys[i]}" in
+    '' | -) ;;
+    *) hints=1 ;;
+    esac
+  done
+  # As tmux lays them out: a space, the label, and the key in brackets.
+  inner=$((width + 2 + hints * 4))
+  file="$(mktemp)"
+  for i in "${!labels[@]}"; do
+    if [ "${keys[i]}" = - ]; then
+      if [ -z "$sep" ]; then
+        printf -v sep '%*s' "$inner" ''
+        sep="${sep// /─}"
+      fi
+      row="$sep"
+    else
+      hint=''
+      if [ "$hints" = 1 ]; then
+        if [ -n "${keys[i]}" ]; then hint=" (${keys[i]})"; else hint='    '; fi
+      fi
+      printf -v pad '%*s' $((width - widths[i])) ''
+      row=" ${labels[i]}$pad$hint "
+    fi
+    printf '%s\037%s\n' "${keys[i]}" "$row"
+  done >"$file"
+  # tmux refuses a popup bigger than the terminal; the menu then scrolls.
+  [ -n "${MENU_SIZE:-}" ] ||
+    MENU_SIZE="$(tmux display-message -p -c "$client" '#{client_width} #{client_height}')"
+  [ -n "${MENU_SGR:-}" ] || MENU_SGR="$(style_sgr "$(get_option menu-selected-style '')")"
+  cols="${MENU_SIZE% *}" rows="${MENU_SIZE#* }"
+  option_value @agent_popup_border_style
+  frame="${VALUE:-fg=green}" # as border_style
+  if [ "$frame" = default ]; then
+    option_value menu-border-style
+    frame="$VALUE"
+  fi
+  option_value @agent_popup_border
+  border="${VALUE:-rounded}"
+  option_value menu-style
+  style="${VALUE:-default}"
+  # shellcheck disable=SC2016 # expanded by the popup's shell
+  tmux display-popup -c "$client" \
+    -w "$((inner + 2 > cols ? cols : inner + 2))" \
+    -h "$((${#labels[@]} + 2 > rows ? rows : ${#labels[@]} + 2))" \
+    -b "$border" -s "$style" -S "${frame:-default}" \
     -T "$(titled "$title")" \
-    "$@"
+    -e "AGENT_POPUP_MENU_SCRIPT=${BASH_SOURCE[0]%/*}/menu" \
+    -e "AGENT_POPUP_MENU=$file" -e "AGENT_POPUP_MENU_START=$start" \
+    -e "AGENT_POPUP_MENU_SELECTED=$MENU_SGR" \
+    -E 'exec "$AGENT_POPUP_MENU_SCRIPT"' || :
+  # shellcheck disable=SC2034 # for the caller
+  [ ! -f "$file.choice" ] || IFS= read -r MENU_CHOICE <"$file.choice"
+  rm -f "$file" "$file.choice"
 }
 
 # show_agent_popup <client> <session> <title>

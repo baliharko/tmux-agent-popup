@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# A menu, run in a popup by show_menu (helpers.sh) for the agent menus.
+# tmux's own menus take no keys but their items' and a fixed few, so they
+# can't go back and forth between menus. This one draws the rows it's
+# given, the highlighted one in menu-selected-style, and reads:
+#
+#   j k, down up, tab       move
+#   l, right, enter         pick the highlighted item
+#   h, left                 back to the menu before
+#   an item's key           pick that item
+#   g G, home end           the first / last item
+#   q, esc, ctrl-c          close
+#
+# A mouse click picks an item, the wheel moves.
+#
+# $AGENT_POPUP_MENU is a file with a row per line: the item's key, \037,
+# and the row as drawn, which can have colours. A key of - is a row that
+# can't be picked, a separator. What was picked goes to
+# $AGENT_POPUP_MENU.choice: the row's number, from 0, or "back". Nothing if
+# the menu was closed. The highlight starts on row $AGENT_POPUP_MENU_START,
+# in $AGENT_POPUP_MENU_SELECTED (SGR parameters).
+set -u
+# First thing, so keys typed while the popup opens don't show. They're
+# kept for the first read.
+stty raw -echo 2>/dev/null
+
+keys=() rows=()
+while IFS=$'\037' read -r key row; do
+  keys+=("$key")
+  rows+=("$row")
+done <"$AGENT_POPUP_MENU"
+n=${#rows[@]}
+[ "$n" -gt 0 ] || exit 0
+on=$'\033['"${AGENT_POPUP_MENU_SELECTED:-7}m" reset=$'\033[0m'
+# The popup may be too short for every row; then the rows shown follow the
+# highlight.
+lines="$(stty size 2>/dev/null)"
+lines="${lines%% *}"
+[ "${lines:-0}" -gt 0 ] 2>/dev/null || lines="$n"
+top=0
+
+# finish [<choice>]
+finish() {
+  [ -z "${1:-}" ] || printf '%s' "$1" >"$AGENT_POPUP_MENU.choice"
+  exit 0
+}
+
+# move <step>: to the next row that can be picked, <step> (1 or -1) at a
+# time, round the ends as tmux's menus do.
+move() {
+  local i="$sel" tries=0
+  while [ "$tries" -lt "$n" ]; do
+    i=$(((i + $1 + n) % n))
+    tries=$((tries + 1))
+    if [ "${keys[i]}" != - ]; then
+      sel="$i"
+      return
+    fi
+  done
+}
+
+# click <b;x;yM>: a mouse event, in the SGR encoding. A press of the left
+# button picks the row under it; the wheel moves.
+click() {
+  local b="${1%%;*}" y="${1##*;}" i
+  case "$y" in
+  *M) y="${y%M}" ;;
+  *) return ;; # a release
+  esac
+  case "$b:$y" in
+  *[!0-9:]*) return ;;
+  0:*)
+    i=$((top + y - 1))
+    [ "$i" -ge "$n" ] || [ "${keys[i]}" = - ] || finish "$i"
+    ;;
+  64:*) move -1 ;;
+  65:*) move 1 ;;
+  esac
+}
+
+draw() {
+  local i last out=$'\033[H'
+  [ "$sel" -ge "$top" ] || top="$sel"
+  [ "$sel" -lt $((top + lines)) ] || top=$((sel - lines + 1))
+  last=$((top + lines))
+  [ "$last" -le "$n" ] || last="$n"
+  for ((i = top; i < last; i++)); do
+    if [ "$i" -eq "$sel" ]; then
+      # A row's own colours end in a reset, which would end the highlight.
+      out+="$on${rows[i]//"$reset"/$reset$on}$reset"
+    else
+      out+="${rows[i]}"
+    fi
+    [ "$i" -eq $((last - 1)) ] || out+=$'\r\n'
+  done
+  printf '%s' "$out"
+}
+
+sel="${AGENT_POPUP_MENU_START:-0}"
+case "$sel" in
+'' | *[!0-9]*) sel=0 ;;
+esac
+if [ "$sel" -ge "$n" ] || [ "${keys[sel]}" = - ]; then
+  sel=$((n - 1))
+  move 1
+fi
+
+# No cursor; mouse clicks reported, in the SGR encoding.
+printf '\033[?25l\033[?1000h\033[?1006h'
+while :; do
+  draw
+  IFS= read -rsn1 -d '' c || finish
+  case "$c" in
+  $'\033')
+    # A key like an arrow comes as a sequence, all at once; esc on its own
+    # has nothing after it. Only the first sequence counts.
+    stty min 0 time 1
+    seq="$(dd bs=64 count=1 2>/dev/null)"
+    stty min 1 time 0
+    seq="${seq%%$'\033'*}"
+    case "$seq" in
+    '') finish ;;
+    '[A' | OA | '[Z') move -1 ;;
+    '[B' | OB) move 1 ;;
+    '[C' | OC) finish "$sel" ;;
+    '[D' | OD) finish back ;;
+    '[H' | OH | '[1~') sel=$((n - 1)) && move 1 ;;
+    '[F' | OF | '[4~') sel=0 && move -1 ;;
+    '[<'*) click "${seq#??}" ;;
+    esac
+    ;;
+  j | $'\t') move 1 ;;
+  k) move -1 ;;
+  l | $'\r' | $'\n') finish "$sel" ;;
+  h) finish back ;;
+  g) sel=$((n - 1)) && move 1 ;;
+  G) sel=0 && move -1 ;;
+  q | $'\003' | $'\007') finish ;;
+  *)
+    for ((i = 0; i < n; i++)); do
+      [ -z "$c" ] || [ "$c" != "${keys[i]}" ] || [ "$c" = - ] || finish "$i"
+    done
+    ;;
+  esac
+done

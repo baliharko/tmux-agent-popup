@@ -331,6 +331,20 @@ wrapped_keys() { [ "$(t list-keys -T prefix | grep -c 'scripts/passthrough')" -e
 # prints nothing on tmux 3.7.)
 wraps_with_pane() { t list-keys -T prefix | grep -F "scripts/passthrough #{q:client_name} '$1' #{q:pane_id}" >/dev/null; }
 in_dir() { [ "$(t display-message -p -t main: '#{pane_current_path}')" = "$1" ]; }
+# fg_is <char> <colour>: the first <char> on the screen is in <colour>, as
+# pyte names it.
+fg_is() {
+  rm -f "$TMP/fg"
+  printf '#fg %s %s\n' "$TMP/fg" "$1" >&3
+  wait_for test -f "$TMP/fg"
+  [ "$(cat "$TMP/fg")" = "$2" ]
+}
+# cell_of <text>: where <text> is on the screen, as a mouse report gives it:
+# "column;row", from 1. The column can be a little to the right, since awk
+# may count bytes, not characters.
+cell_of() { snap && awk -v t="$1" 'index($0, t) { print index($0, t) ";" NR; exit }' "$TMP/snap"; }
+# pane_lacks <pane> <text>: the pane doesn't show <text>.
+pane_lacks() { ! t capture-pane -p -t "$1" | grep -qF -- "$2"; }
 # first_model_is <model>: of the stand-in's models, the menu lists <model>
 # first.
 first_model_is() {
@@ -532,6 +546,58 @@ press '3'
 check "ollama's own error is shown, e.g. when it isn't running" screen_has 'could not connect to ollama server'
 check '... and nothing starts' no_session 'copilot+local'
 mv "$TMP/ollama-list.off" "$TMP/ollama-list"
+check 'no script output lands in the pane' no_view_mode
+
+echo "menu keys"
+press '\x02A'
+wait_for screen_has 'Local model ›'
+check 'the last item starts without the highlight' fg_is '›' default
+press 'k'
+check 'k goes round to it from the first, highlighting it in menu-selected-style' fg_is '›' black
+press 'l'
+check 'l opens the highlighted item: the next menu' screen_has "$L Local model $R"
+press 'j'
+press 'j'
+press '\x1b[C'
+check 'so does the right arrow' screen_has "$L Copilot · model $R"
+press 'h'
+check 'h goes back to the menu before' screen_has "$L Local model $R"
+press 'l'
+check '... on the item you came from' screen_has "$L Copilot · model $R"
+press '\x1b[D'
+wait_for screen_has "$L Local model $R"
+press '\x1b[D'
+check 'the left arrow goes back too' screen_has "$L Agents $R"
+press '\r'
+check '... and enter opens the highlighted item' screen_has "$L Local model $R"
+press 'h'
+wait_for screen_has "$L Agents $R"
+press 'h'
+check 'h in the first menu closes it' screen_lacks "$L Agents $R"
+check '... starting nothing' no_popup
+# Typed as quickly as someone who knows the way: keys typed between two
+# menus, before the next is up, would go to the pane underneath.
+press '\x02A'
+sleep 0.3
+for key in 6 3 1; do
+  press "$key"
+  sleep 0.1
+done
+check 'keys typed quickly reach each menu in turn' popup_on 'copilot+local'
+check '... none of them the pane underneath' pane_lacks main: 631
+press '\x02a'
+wait_for no_popup
+t kill-session -t "=$(session_for 'copilot+local')"
+t set -g mouse on
+press '\x02A'
+wait_for screen_has 'Local model ›'
+at="$(cell_of Codex)"
+press "\\x1b[<0;${at}M\\x1b[<0;${at}m"
+check 'a mouse click picks an item' popup_on codex
+press '\x02a'
+wait_for no_popup
+t kill-session -t "=$(session_for codex)"
+t set -gu mouse
 check 'no script output lands in the pane' no_view_mode
 
 echo "agent session outside a popup"

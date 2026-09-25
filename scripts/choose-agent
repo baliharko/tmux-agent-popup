@@ -1,54 +1,273 @@
 #!/usr/bin/env bash
-# Show a menu of the configured agents for the pane's directory. Agents already
-# running there are marked. With ollama installed, the menu ends with "Local
-# model", for an agent on a model of your own (choose-local). Inside an agent
-# popup it dismisses the popup instead, like the toggle key.
+# The agent menu for the pane's directory: the configured agents, marked
+# while they run there. With ollama installed it ends with "Local model",
+# for an agent on a model on your own machine: a menu of the agents
+# `ollama launch` can start (local_agents in helpers.sh), then one of the
+# models downloaded, the one used last first. An agent on a local model
+# already running here is marked with its model, and picking it reopens it.
+# h and l, or the left and right arrows, go back and forth between the
+# menus; going back highlights the item you came from.
 #
-#   choose-agent <client> <pane>
+# Inside an agent popup it dismisses the popup instead, like the toggle key.
+#
+#   choose-agent <client> <pane>                  the agent menu
+#   choose-agent <client> <pane> models <agent>   the models, for <agent>
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
 . "$DIR/helpers.sh"
 
-client="$1" pane="$2"
+client="$1" pane="$2" menu="${3:-agents}" agent="${4:-}"
+MARK=$'\033[32m●\033[0m'
 
-leave_agent_session "$client" "$pane" && exit 0
-
-dir="$(tmux display-message -p -t "$pane" '#{pane_current_path}')"
-[ -n "$dir" ] || exit 0
-running=" $(dir_agents "$dir" | tr '\n' ' ') "
-
-items=()
-n=0
-for agent in $(configured_agents); do
-  n=$((n + 1))
-  case "$running" in
-  *" $agent "*) mark='#[fg=green]●#[default]' ;;
-  *) mark=' ' ;;
-  esac
-  key=''
-  [ "$n" -le 9 ] && key="$n"
-  label="$(agent_option "$agent" label)"
-  # The menu expands each command as a format and run-shell expands it again,
-  # so ## reaches run-shell as #. client and pane are tty paths and %ids,
-  # safe to paste.
-  items+=("$mark ${label//\#/##}" "$key" \
-    "run-shell -b \"##{q:@agent_popup_dir}/scripts/open-agent $agent $client $pane\"")
+# Keys typed before a menu is up go to the pane under it, and what people
+# know they type quickly, like prefix A 5 3 1. So what the menus need comes
+# up front, in one tmux call, where each takes a few milliseconds: the
+# pane's agent (set in agent sessions) and directory, the terminal's size,
+# the options the menus read with the built-in agents' labels, and the agent
+# sessions, last as they take a line each.
+options=(@agent_popup_agents @agent_popup_local_agents @agent_popup_last_model
+  @agent_popup_border @agent_popup_border_style menu-style menu-selected-style
+  menu-border-style @agent_popup_claude_label @agent_popup_codex_label
+  @agent_popup_copilot_label @agent_popup_opencode_label)
+cmds=(display-message -p -t "$pane" '#{@agent_popup_agent}' \;
+  display-message -p -t "$pane" '#{pane_current_path}' \;
+  display-message -p -c "$client" '#{client_width} #{client_height}')
+for name in "${options[@]}"; do
+  cmds+=(\; display-message -p "#{$name}")
 done
-[ "$n" -gt 0 ] || exit 0
+cmds+=(\; list-sessions -F "$AGENT_SESSIONS_FORMAT")
+running=' '
+{
+  IFS= read -r in_agent
+  IFS= read -r dir
+  IFS= read -r MENU_SIZE
+  for name in "${options[@]}"; do
+    IFS= read -r value
+    keep_option "$name" "$value"
+  done
+  # The agents running in this directory, e.g. " claude copilot+local ".
+  while IFS= read -r line; do
+    path="$line"
+    for _ in 1 2 3 4 5 6; do path="${path#*:}"; done
+    [ -z "${line%%:*}" ] || [ "$path" != "$dir" ] || running="$running${line%%:*} "
+  done
+} < <(tmux "${cmds[@]}")
 
-# Below a separator (an item with no name): agents on a local model, marked
-# while one runs here.
-if command -v ollama >/dev/null 2>&1 && [ -n "$(local_agents)" ]; then
-  n=$((n + 1))
-  case "$running" in
-  *"+local "*) mark='#[fg=green]●#[default]' ;;
-  *) mark=' ' ;;
-  esac
-  key=''
-  [ "$n" -le 9 ] && key="$n"
-  items+=('' "$mark Local model ›" "$key" \
-    "run-shell -b \"##{q:@agent_popup_dir}/scripts/choose-local $client $pane\"")
+if [ -n "$in_agent" ]; then
+  leave_agent_session "$client" "$pane"
+  exit 0
 fi
+[ -n "$dir" ] || exit 0
 
-show_menu "$client" "$pane" Agents "${items[@]}"
+AGENTS=() LOCALS=()
+while read -r agent; do AGENTS+=("$agent"); done < <(configured_agents)
+if command -v ollama >/dev/null 2>&1; then
+  while read -r agent; do LOCALS+=("$agent"); done < <(local_agents)
+fi
+# The labels of agents of your own take one more call.
+names=()
+for agent in ${AGENTS[@]+"${AGENTS[@]}"} ${LOCALS[@]+"${LOCALS[@]}"}; do
+  case "$agent" in
+  claude | codex | copilot | opencode) ;;
+  *) names+=("@agent_popup_${agent}_label") ;;
+  esac
+done
+load_options ${names[@]+"${names[@]}"}
+LABELS=()
+for agent in ${AGENTS[@]+"${AGENTS[@]}"} ${LOCALS[@]+"${LOCALS[@]}"}; do
+  option_value "@agent_popup_${agent}_label"
+  agent_default "$agent" label
+  LABELS+=("${VALUE:-$DEFAULT}")
+done
+
+# label_of <agent>: sets LABEL to its label.
+label_of() {
+  local i=0 agent
+  for agent in ${AGENTS[@]+"${AGENTS[@]}"} ${LOCALS[@]+"${LOCALS[@]}"}; do
+    if [ "$agent" = "$1" ]; then
+      LABEL="${LABELS[i]}"
+      return
+    fi
+    i=$((i + 1))
+  done
+  LABEL="$1"
+}
+
+# say <message>: a message on the client. It's a format, so # is doubled.
+say() { tmux display-message -c "$client" "agent-popup: ${1//\#/##}"; }
+
+# pick <title> <start id> [<id> <label>]...
+# A menu of the labels, numbered, starting on the item with <start id>. An
+# item with the id - and no label is a separator. Sets PICKED to the id of
+# the item picked, "back", or nothing if the menu was closed.
+pick() {
+  local title="$1" at="$2" ids=() items=() start=0 n=0 keys=0 key
+  shift 2
+  while [ "$#" -ge 2 ]; do
+    key=-
+    if [ "$1" != - ]; then
+      keys=$((keys + 1))
+      key=''
+      [ "$keys" -gt 9 ] || key="$keys"
+    fi
+    [ "$1" != "$at" ] || start="$n"
+    ids+=("$1")
+    items+=("$key" "$2")
+    n=$((n + 1))
+    shift 2
+  done
+  show_menu "$client" "$title" "$start" "${items[@]}"
+  case "$MENU_CHOICE" in
+  '' | back) PICKED="$MENU_CHOICE" ;;
+  *) PICKED="${ids[MENU_CHOICE]}" ;;
+  esac
+}
+
+# marked <running name> <label>: sets LABEL to the label, marked if that's
+# running here.
+marked() {
+  case "$running" in
+  *" $1 "*) LABEL="$MARK $2" ;;
+  *) LABEL="  $2" ;;
+  esac
+}
+
+agents_menu() {
+  local items=() agent
+  for agent in ${AGENTS[@]+"${AGENTS[@]}"}; do
+    label_of "$agent"
+    marked "$agent" "$LABEL"
+    items+=("$agent" "$LABEL")
+  done
+  [ "${#items[@]}" -gt 0 ] || exit 0
+  # Below a separator, marked while any agent on a local model runs here.
+  if [ "${#LOCALS[@]}" -gt 0 ]; then
+    items+=(- '')
+    case "$running" in
+    *"+local "*) items+=(local "$MARK Local model ›") ;;
+    *) items+=(local '  Local model ›') ;;
+    esac
+  fi
+  pick Agents "$1" "${items[@]}"
+}
+
+local_menu() {
+  local items=() agent model
+  for agent in ${LOCALS[@]+"${LOCALS[@]}"}; do
+    label_of "$agent"
+    marked "$agent+local" "$LABEL"
+    case "$running" in
+    *" $agent+local "*)
+      model="$(tmux display-message -p -t "=$(session_name "$agent+local" "$dir"):" '#{@agent_popup_model}')"
+      LABEL="$LABEL  "$'\033[2m'"$model"$'\033[0m'
+      ;;
+    esac
+    items+=("$agent" "$LABEL")
+  done
+  [ "${#items[@]}" -gt 0 ] || exit 0
+  pick 'Local model' "$1" "${items[@]}"
+}
+
+# list_models
+# Asks ollama for its models in the background, while the menu before the
+# model menu is up, so that the model menu comes up at once. Its output, and
+# then its exit status, come through file descriptor 5; models_menu reads
+# them. Unread, they're dropped when this script ends.
+list_models() {
+  [ -z "${LISTING:-}" ] || return 0
+  LISTING=1
+  exec 5< <(ollama list 2>&1; echo "agent-popup-status $?")
+}
+
+# open_agent <open-agent's arguments>
+# Hands over to open-agent, without the model list if one was asked for.
+open_agent() {
+  [ -z "${LISTING:-}" ] || exec 5<&-
+  exec "$DIR/open-agent" "$@"
+}
+
+# models_menu <agent>
+models_menu() {
+  local line list='' status=1 n=0 model models=() items=() VALUE
+  if ! command -v ollama >/dev/null 2>&1; then
+    say 'ollama not found'
+    exit 0
+  fi
+  list_models
+  while IFS= read -r line <&5; do
+    case "$line" in
+    'agent-popup-status '*) status="${line#agent-popup-status }" ;;
+    *) list="$list$line"$'\n' ;;
+    esac
+  done
+  exec 5<&-
+  LISTING=''
+  if [ "$status" != 0 ]; then
+    say "${list%%$'\n'*}"
+    exit 0
+  fi
+  # The model names, below the header. Ollama's are letters, digits and
+  # ._:/-, which need no quoting; anything else is left out. The one used
+  # last goes first.
+  option_value @agent_popup_last_model
+  while IFS= read -r line; do
+    n=$((n + 1))
+    [ "$n" -gt 1 ] || continue
+    model="${line%%[[:space:]]*}"
+    case "$model" in
+    [A-Za-z0-9]*) ;;
+    *) continue ;;
+    esac
+    case "$model" in
+    *[!A-Za-z0-9._:/-]*) continue ;;
+    esac
+    if [ "$model" = "$VALUE" ]; then models=("$model" ${models[@]+"${models[@]}"}); else models+=("$model"); fi
+  done <<<"$list"
+  if [ "${#models[@]}" -eq 0 ]; then
+    say 'no ollama models; download one with ollama pull'
+    exit 0
+  fi
+  for model in "${models[@]}"; do
+    items+=("$model" "$model")
+  done
+  label_of "$1"
+  pick "$LABEL · model" '' "${items[@]}"
+}
+
+at=''
+while :; do
+  case "$menu" in
+  agents)
+    agents_menu "$at"
+    case "$PICKED" in
+    '' | back) exit 0 ;;
+    local) menu=local at='' ;;
+    *) open_agent "$PICKED" "$client" "$pane" ;;
+    esac
+    ;;
+  local)
+    list_models
+    local_menu "$at"
+    case "$PICKED" in
+    '') exit 0 ;;
+    back) menu=agents at=local ;;
+    *)
+      case "$running" in
+      *" $PICKED+local "*) open_agent "$PICKED+local" "$client" "$pane" ;;
+      esac
+      menu=models agent="$PICKED" at=''
+      ;;
+    esac
+    ;;
+  models)
+    models_menu "$agent"
+    case "$PICKED" in
+    '') exit 0 ;;
+    back) menu=local at="$agent" ;;
+    *) open_agent "$agent+local" "$client" "$pane" "$PICKED" ;;
+    esac
+    ;;
+  *) exit 0 ;;
+  esac
+done

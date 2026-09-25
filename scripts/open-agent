@@ -7,7 +7,7 @@
 # Callers pass #{client_name} and #{pane_id}. Everything else is looked up
 # from those, so paths never go through shell quoting.
 #
-# <agent> can be one on a local model, "<agent>+local" (choose-local), which
+# <agent> can be one on a local model, "<agent>+local" (choose-agent), which
 # starts with `ollama launch <agent> --model <model>`. Without a model it
 # only reopens a session already running, and otherwise asks for one.
 set -u
@@ -26,7 +26,7 @@ case "$agent" in
   if tmux has-session -t "=$session" 2>/dev/null; then
     model="$(tmux display-message -p -t "=$session:" '#{@agent_popup_model}')"
   elif [ -z "$model" ]; then
-    exec "$DIR/choose-local" "$client" "$pane" "${agent%+local}"
+    exec "$DIR/choose-agent" "$client" "$pane" models "${agent%+local}"
   fi
   ;;
 esac
