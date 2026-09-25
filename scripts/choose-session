@@ -20,7 +20,7 @@ fi
 # shown on. display-popup -C closes it at once; a popup opened while another
 # is still closing can come up without keyboard input.
 if is_popup_client "$client"; then
-  host="$(tmux display-message -p -t "$pane" '#{@agent_popup_host}')"
+  host="$(popup_host "$client" "$pane")"
   if ! attached_client "$host"; then
     # Opened by an older version, or its terminal is gone: just close it.
     tmux detach-client -t "$client"

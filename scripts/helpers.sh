@@ -43,13 +43,21 @@ configured_agents() {
 
 # is_popup_client <client>
 # True when <client> is the nested client inside one of our popups. tmux
-# starts a popup's command itself, and open-agent execs the client there, so
+# starts a popup's command itself, and attach-agent execs the client there, so
 # its parent process is the tmux server.
 is_popup_client() {
   local pids
   pids="$(tmux list-clients -F '#{client_name} #{client_pid} #{pid}' |
     awk -v c="$1" '$1 == c { print $2, $3 }')"
   [ -n "$pids" ] && [ "$(ps -o ppid= -p "${pids% *}" | tr -d ' ')" = "${pids#* }" ]
+}
+
+# popup_host <client> <pane>
+# The client that the agent popup whose own client is <client> is shown on,
+# as the popup noted when it opened (attach-agent); <pane> is the agent's.
+# Nothing for a popup opened by an older version.
+popup_host() {
+  tmux display-message -p -t "$2" "#{@agent_popup_host_$1}"
 }
 
 # attached_client <name>
@@ -172,6 +180,17 @@ show_popup() {
     -S "$(border_style)" \
     -T "$(titled "$title")" \
     "$@"
+}
+
+# show_agent_popup <client> <session> <title>
+# An agent's <session> in a popup on <client>, attached by attach-agent, next
+# to this file. Blocks until it closes. The popup's command finds the script
+# through the environment, so the install path needs no quoting for whatever
+# shell runs it.
+show_agent_popup() {
+  # shellcheck disable=SC2016 # expanded by the popup's shell
+  show_popup "$1" "$3" -e "AGENT_POPUP_ATTACH=$(dirname "${BASH_SOURCE[0]}")/attach-agent" \
+    -e "AGENT_POPUP_SESSION=$2" -e "AGENT_POPUP_HOST=$1" -E 'exec "$AGENT_POPUP_ATTACH"'
 }
 
 # session_name <agent> <dir>

@@ -53,21 +53,25 @@ fi
 # and multi-command bindings survive), and the prefix binding is replaced by
 # one that replays the key through that table: straight away in a normal
 # pane, via scripts/passthrough in an agent session. Unbound keys are left
-# alone.
+# alone. A key wrapped by an earlier load is only wrapped again, so its
+# wrapper is this version's.
 bindings="$(tmux list-keys -T prefix)"
 copied="$(mktemp)"
 for key in $(get_option @agent_popup_passthrough_keys '0 1 2 3 4 5 6 7 8 9 c n p l w s ( ) h j k'); do
   line="$(printf '%s\n' "$bindings" |
     awk -v k="$key" '{ i = 2; if ($i == "-r") i++ } $i == "-T" && $(i + 2) == k')"
   case "$line" in
-  '' | *scripts/passthrough*) continue ;; # unbound, or wrapped by an earlier load
+  '') continue ;; # unbound
+  *scripts/passthrough*) ;; # wrapped by an earlier load, its own binding copied
+  *)
+    printf '%s\n' "$line" | sed -E 's/^(bind-key +(-r +)?)-T prefix /\1-T agent-popup-keys /' >"$copied"
+    tmux source-file "$copied"
+    ;;
   esac
-  printf '%s\n' "$line" | sed -E 's/^(bind-key +(-r +)?)-T prefix /\1-T agent-popup-keys /' >"$copied"
-  tmux source-file "$copied"
   repeat=()
   case "$line" in 'bind-key -r '*) repeat=(-r) ;; esac
   tmux bind-key ${repeat[@]+"${repeat[@]}"} -T prefix "$key" if-shell -F '#{@agent_popup_agent}' \
-    "run-shell -b \"#{q:@agent_popup_dir}/scripts/passthrough #{q:client_name} '$key' #{q:@agent_popup_host}\"" \
+    "run-shell -b \"#{q:@agent_popup_dir}/scripts/passthrough #{q:client_name} '$key' #{q:pane_id}\"" \
     "switch-client -T agent-popup-keys ; send-keys -K '$key'"
 done
 rm -f "$copied"

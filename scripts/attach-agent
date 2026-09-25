@@ -1,0 +1,12 @@
+#!/bin/sh
+# The command in an agent popup (show_agent_popup in helpers.sh): becomes the
+# popup's own client, attached to the agent's session. First it notes, under
+# its own name (its tty), which client the popup is shown on, for keys
+# pressed inside it (popup_host): the session can be in popups on other
+# terminals too. One tmux command, exec'd, so the client is the process tmux
+# started for the popup (is_popup_client).
+#
+#   AGENT_POPUP_SESSION  the agent's session
+#   AGENT_POPUP_HOST     the client the popup is shown on
+exec tmux set-option -t "=$AGENT_POPUP_SESSION:" "@agent_popup_host_$(tty)" "$AGENT_POPUP_HOST" \; \
+  attach-session -t "=$AGENT_POPUP_SESSION"

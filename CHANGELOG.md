@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Keys pressed in an agent popup act on the terminal it's shown on, also
+  when two terminals on one session show the agent at once (a second
+  window, or Ghostty's quick terminal): `prefix u` and the navigation keys
+  went to whichever terminal had opened it last. Each popup now notes its
+  own terminal. Popups already open when you update close on the first
+  such key.
+
 - The picker's nav mode shows just the agents and the keys: the input
   line comes up only with `/` (fzf 0.59 and later), so other letters no
   longer start a search. A filter kept after `esc` shows in the key hints.

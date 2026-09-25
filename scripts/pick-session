@@ -360,9 +360,7 @@ case "${1:-}" in
   agent="$(tmux display-message -p -t "=$session:" '#{@agent_popup_agent}' 2>/dev/null)"
   tmux display-popup -C -c "$client"
   [ -n "$agent" ] || exit 0 # it exited in the meantime
-  tmux set-option -t "=$session:" @agent_popup_host "$client"
-  show_popup "$client" "$(agent_option "$agent" label)" \
-    -E "exec tmux attach-session -t '=$session'" || : # see the end of open-agent
+  show_agent_popup "$client" "$session" "$(agent_option "$agent" label)" || : # see the end of open-agent
   exit 0
   ;;
 esac

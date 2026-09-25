@@ -19,15 +19,15 @@ SOCK="agent-popup-test-$$"
 # Physical path: on macOS the temp dir is behind the /var -> /private/var
 # symlink, and tmux reports resolved paths.
 TMP="$(cd "$(mktemp -d)" && pwd -P)"
-CPID=''
+CPID='' CPID2=''
 t() { tmux -L "$SOCK" "$@"; }
 cleanup() {
   t kill-server 2>/dev/null
   rm -f "${SOCKET:-}" # kill-server leaves the socket file behind
-  if [ -n "$CPID" ]; then
-    kill "$CPID" 2>/dev/null
-    wait "$CPID" 2>/dev/null
-  fi
+  for pid in $CPID $CPID2; do
+    kill "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+  done
   # The stand-in that ignores hang-ups outlives the server if ctrl-x failed.
   [ -s "$TMP/stubborn.pid" ] && kill "$(cat "$TMP/stubborn.pid")" 2>/dev/null
   rm -rf "$TMP"
@@ -301,6 +301,9 @@ windows_in_session() { [ "$(t list-windows -t "=$(session_for "$1"):" | wc -l | 
 process_gone() { ! kill -0 "$1" 2>/dev/null; }
 window_is() { [ "$(t display-message -p -t main: '#{window_index}')" = "$1" ]; }
 wrapped_keys() { [ "$(t list-keys -T prefix | grep -c 'scripts/passthrough')" -eq "$1" ]; }
+# wraps_with_pane <key>: its wrapper passes the pane. (list-keys with a key
+# prints nothing on tmux 3.7.)
+wraps_with_pane() { t list-keys -T prefix | grep -F "scripts/passthrough #{q:client_name} '$1' #{q:pane_id}" >/dev/null; }
 in_dir() { [ "$(t display-message -p -t main: '#{pane_current_path}')" = "$1" ]; }
 # Script failures and output show up in view mode, in whichever pane the key
 # was pressed in, not necessarily the current one.
@@ -340,6 +343,7 @@ wait_for no_popup
 press '\x02A'
 wait_for screen_has 'Agents'
 press '5'
+wait_for popup_on shade
 check 'an agent asking for the background gets the real terminal colour' \
   grep -q 'rgb:1f1f/1f1f/2828' "$TMP/shade.reply"
 if [ "$(tmux_at_least 3 6)" ]; then
@@ -354,6 +358,7 @@ rm -f "$TMP/shade.reply"
 press '\x02A'
 wait_for screen_has 'Agents'
 press '5'
+wait_for popup_on shade
 check '... without the background, with @agent_popup_transparent' pane_style_is shade 'fg=#dcd7ba'
 # tmux can't answer for a background it doesn't draw; the plugin does.
 check "... yet an agent asking for the background gets the terminal's" \
@@ -698,6 +703,13 @@ echo "navigation keys"
 check 'only bound keys are wrapped' wrapped_keys 19
 load_plugin
 check 'loading the plugin again wraps nothing twice' wrapped_keys 19
+# A wrapper bound by an older version, which passed the client the popup
+# was shown on instead of the pane.
+t bind-key -T prefix n if-shell -F '#{@agent_popup_agent}' \
+  "run-shell -b \"#{q:@agent_popup_dir}/scripts/passthrough #{q:client_name} 'n' #{q:@agent_popup_host}\"" \
+  "switch-client -T agent-popup-keys ; send-keys -K 'n'"
+load_plugin
+check "... and brings an older version's wrappers up to date" wraps_with_pane n
 t new-window -d -t main:1 2>/dev/null # exists if the picker tests ran
 t new-window -d -t main:5
 goto select-window -t main:0
@@ -731,6 +743,50 @@ check '... and opens a window underneath' window_is 2
 check '... not in the agent session' windows_in_session claude 1
 settle
 check 'closing popups this way reports no errors' no_view_mode
+
+echo "two terminals"
+# A second terminal on the same session, as Ghostty's quick terminal can be.
+# Each shows the agent in a popup of its own, and keys pressed in a popup act
+# on that terminal, not on whichever opened the agent last.
+mkfifo "$TMP/ctl2"
+"$PYTHON" "$ROOT/tests/pty_client.py" "$SOCK" "$TMP/ctl2" &
+CPID2=$!
+exec 4<>"$TMP/ctl2"
+press2() { printf '%s\n' "$1" >&4; }
+snap2() {
+  rm -f "$TMP/snap2"
+  printf '#snap %s\n' "$TMP/snap2" >&4
+  wait_for test -f "$TMP/snap2"
+}
+screen2_has() { snap2 && grep -qF -- "$1" "$TMP/snap2"; }
+screen2_lacks() { snap2 && ! grep -qF -- "$1" "$TMP/snap2"; }
+screen_lacks() { snap && ! grep -qF -- "$1" "$TMP/snap"; }
+terminals_on_main() { [ "$(t list-clients -F '#{client_session}' | grep -cx main)" -eq "$1" ]; }
+popups_on() { [ "$(t list-clients -F '#{client_session}' | grep -c "^agent-$1-")" -eq "$2" ]; }
+wait_for terminals_on_main 2
+goto select-window -t main:0
+press '\x02a'
+wait_for popup_on claude
+press2 '\x02a'
+check 'a second terminal shows the agent in a popup of its own' popups_on claude 2
+press '\x02n'
+check 'prefix n closes the popup of the terminal it was pressed in' screen_lacks "$L Claude Code $R"
+check '... not the other one' screen2_has "$L Claude Code $R"
+if command -v fzf >/dev/null 2>&1; then
+  for c in $(t list-clients -F '#{client_name}'); do t display-popup -C -c "$c" 2>/dev/null; done
+  wait_for popups_on claude 0
+  goto select-window -t main:0 # prefix n moved on from it
+  settle
+  press2 '\x02a'
+  wait_for popups_on claude 1
+  press '\x02a' # the first terminal opens the agent last
+  wait_for popups_on claude 2
+  press2 '\x02u'
+  check 'prefix u opens the picker on the terminal it was pressed in' screen2_has 'ctrl-x: kill'
+  check '... leaving the other its popup' screen_has "$L Claude Code $R"
+  press2 '\x03'
+  wait_for screen2_lacks 'ctrl-x: kill'
+fi
 
 echo
 if [ "$failures" -gt 0 ]; then

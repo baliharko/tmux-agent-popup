@@ -5,20 +5,25 @@
 # terminal that switched to the agent session with prefix s, it replays the
 # key on that client as if it were never wrapped.
 #
-#   passthrough <client> <key> [<host>]
+#   passthrough <client> <key> <pane>
 #
-# <host> is the session's @agent_popup_host: the client the popup is on.
+# <pane> is the pane the key was pressed in.
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
 . "$DIR/helpers.sh"
 
-client="$1" key="$2" host="${3:-}"
+client="$1" key="$2" pane="${3:-}"
 
 if ! is_popup_client "$client"; then
   tmux switch-client -c "$client" -T agent-popup-keys \; send-keys -K -c "$client" "$key"
   exit 0
 fi
+
+case "$pane" in
+%*) host="$(popup_host "$client" "$pane")" ;;
+*) host="$pane" ;; # bound by an older version, which passed the popup's terminal
+esac
 
 if ! attached_client "$host"; then
   # Opened by an older version, or its terminal is gone: just close it.
