@@ -455,6 +455,39 @@ check 'prefix a falls back to the remaining agent' popup_on claude
 press '\x02A'
 check 'prefix A inside the popup dismisses it' no_popup
 
+echo "Pi built-in agent"
+t set-option -gu @agent_popup_agents
+t set-option -g @agent_popup_pi_cmd cat
+press '\x02A'
+check 'Pi appears in the default menu' screen_has 'Pi'
+press '5'
+check 'choosing Pi opens its popup' popup_on pi
+press '\x02a'
+check 'Pi keeps running while hidden' has_session pi
+press '\x02a'
+check 'the toggle reopens Pi' popup_on pi
+press '\x04'
+check 'quitting Pi ends its session' no_session pi
+wait_for no_popup
+t set-option -g @agent_popup_pi_label 'Custom Pi'
+press '\x02A'
+check 'Pi respects a custom label' screen_has 'Custom Pi'
+press '6'
+wait_for screen_has 'Local model'
+check 'Pi is offered for local models' screen_has 'Custom Pi'
+press '5'
+wait_for screen_has 'Custom Pi · model'
+press '1'
+check 'Pi opens on a local model' popup_on 'pi+local'
+check 'Pi passes the selected model to Ollama' screen_has 'ollama-launch pi --model qwen3.5:35b-a3b-coding-nvfp4'
+press '\x02a'
+wait_for no_popup
+t kill-session -t "=$(session_for 'pi+local')"
+t set-option -gu @agent_popup_pi_label
+t set-option -gu @agent_popup_pi_cmd
+t set-option -gu @agent_popup_last_model
+t set-option -g @agent_popup_agents 'claude codex copilot broken shade'
+
 echo "root key"
 press '\x1ba'
 check 'M-a opens the popup' popup_on claude

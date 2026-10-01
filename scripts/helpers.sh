@@ -53,6 +53,7 @@ agent_default() {
   codex:label) DEFAULT='Codex' ;;
   copilot:label) DEFAULT='Copilot' ;;
   opencode:label) DEFAULT='OpenCode' ;;
+  pi:label) DEFAULT='Pi' ;;
   *:cmd | *:label) DEFAULT="$1" ;;
   *) DEFAULT='' ;;
   esac
@@ -81,7 +82,7 @@ agent_label() {
 # used in option and session names.
 configured_agents() {
   local agent
-  for agent in $(get_option @agent_popup_agents 'claude codex copilot opencode'); do
+  for agent in $(get_option @agent_popup_agents 'claude codex copilot opencode pi'); do
     case "$agent" in
     *[!A-Za-z0-9_-]*) continue ;;
     esac
@@ -100,7 +101,7 @@ local_agents() {
   if [ -z "$list" ]; then
     for agent in $(configured_agents); do
       case "$agent" in
-      claude | codex | copilot | opencode) list="$list $agent" ;;
+      claude | codex | copilot | opencode | pi) list="$list $agent" ;;
       esac
     done
   fi

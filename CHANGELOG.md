@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+- Pi is a built-in agent, available in the agent menu and through Ollama
+  under Local model. Configure it with `@agent_popup_pi_cmd` and
+  `@agent_popup_pi_label`.
+
 - Agents on a local model: with [ollama](https://ollama.com) installed,
   the `prefix A` menu ends with **Local model ›**, which asks for the agent
-  (Claude Code, Codex, Copilot or OpenCode) and then one of the models
+  (Claude Code, Codex, Copilot, OpenCode or Pi) and then one of the models
   you've downloaded, the one used last first. It starts with `ollama launch
   <agent> --model <model>`, in a session of its own, so it runs next to
   the agent's usual one. Popups, the menus and the picker show the model.

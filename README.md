@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/baliharko/tmux-agent-popup/actions/workflows/ci.yml/badge.svg)](https://github.com/baliharko/tmux-agent-popup/actions/workflows/ci.yml)
 
-Open coding agents (Claude Code, Codex, GitHub Copilot CLI, OpenCode, or
+Open coding agents (Claude Code, Codex, GitHub Copilot CLI, OpenCode, Pi, or
 anything else you configure) in a large centered tmux popup.
 
 Each agent runs in its own tmux session per project directory. Hide the popup
@@ -74,8 +74,8 @@ With [ollama](https://ollama.com) installed, the `prefix A` menu ends with
 asks which agent, then which of the models you've downloaded (`ollama
 list`), the one you used last first, and starts the agent with `ollama
 launch <agent> --model <model>`. `l` and `h` (or the arrow keys) go back
-and forth between the three menus, and numbers work in each: with the four
-built-in agents, `prefix A 5 3 1` starts Copilot on the first model.
+and forth between the three menus, and numbers work in each: with the five
+built-in agents, `prefix A 6 3 1` starts Copilot on the first model.
 
 An agent on a local model has a session of its own, so it runs next to the
 agent's usual one in the same directory. Its popup is titled with the model
@@ -211,8 +211,9 @@ set -g @agent_popup_claude_cmd  'claude'
 set -g @agent_popup_codex_cmd   'codex'
 set -g @agent_popup_copilot_cmd 'copilot'
 set -g @agent_popup_opencode_cmd 'opencode'
+set -g @agent_popup_pi_cmd      'pi'
 
-set -g @agent_popup_local_agents 'claude codex copilot opencode' # under Local model
+set -g @agent_popup_local_agents 'claude codex copilot opencode pi' # under Local model
 set -g @agent_popup_local_cmd    'ollama launch'
 ```
 
@@ -228,8 +229,8 @@ set -g @agent_popup_claude_cmd 'claude --dangerously-skip-permissions'
 
 `@agent_popup_local_agents` lists the agents offered under Local model. By
 default it's the built-in agents you have in `@agent_popup_agents`, which
-`ollama launch` can all start; add others it can launch (e.g. `pi` or
-`qwen`) by name. `@agent_popup_local_cmd` is the start of their command,
+`ollama launch` can all start; add others it can launch (e.g. `qwen`) by name.
+`@agent_popup_local_cmd` is the start of their command,
 followed by the agent and `--model <model>`, and takes wrappers like the
 others: `'direnv exec . ollama launch'`.
 
@@ -255,7 +256,7 @@ like tmux's menus, since those can't be given keys.
 List it in `@agent_popup_agents`. The menu shows agents in this order:
 
 ```tmux
-set -g @agent_popup_agents 'claude codex copilot opencode gemini'
+set -g @agent_popup_agents 'claude codex copilot opencode pi gemini'
 set -g @agent_popup_gemini_cmd   'gemini'  # defaults to the agent name
 set -g @agent_popup_gemini_label 'Gemini'  # menu and title; defaults to the name
 ```
