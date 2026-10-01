@@ -3,6 +3,7 @@
 # in fzf with a live preview of its screen: the plugin's own sessions, and
 # agents started by hand in ordinary panes. enter opens one: a session in a
 # popup of its own, a pane by switching the terminal to it. ctrl-x kills it.
+# n (ctrl-n before fzf 0.46) starts a new one, through the agent menu.
 #
 #   pick-session                                 run the picker
 #   pick-session --list                          print the rows
@@ -12,11 +13,13 @@
 #   pick-session --kill <kind> <target> <pid>    stop an agent
 #   pick-session --esc                           what esc does, for fzf
 #   pick-session --open <client> <session>       swap the picker for a session
+#   pick-session --new <client> <pane>           swap it for the agent menu
 #
 # Rows are "<kind>\t<target>\t<pid>\t<display>". kind "session": target is a
 # session this plugin runs. kind "pane": target is a pane running an agent on
 # its own, pid the agent's process. AGENT_POPUP_CLIENT, set by
-# choose-session, is the client the popup is shown on.
+# choose-session, is the client the popup is shown on, and AGENT_POPUP_PANE
+# the pane under it, whose directory a new agent is for.
 set -u
 
 # The preview is redrawn ten times a second, so it's handled first, without
@@ -63,8 +66,8 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # the input line, and / switches to search. Before, the input line always
 # shows, and so / or any unbound key switches, since typing goes into it.
 NAV_PROMPT='nav> ' SEARCH_PROMPT='search> '
-NAV_KEYS='h,j,k,l,g,G,q,/'
-NAV_HEADER='j/k: move · l: open · /: search · ctrl-x: kill · q: close'
+NAV_KEYS='h,j,k,l,g,G,q,/,n'
+NAV_HEADER='j/k: move · l: open · n: new · /: search · ctrl-x: kill · q: close'
 SEARCH_HEADER='enter: open · esc: back to j/k · ctrl-x: kill'
 TO_SEARCH="unbind($NAV_KEYS,change)+change-prompt($SEARCH_PROMPT)+change-header($SEARCH_HEADER)"
 TO_NAV_KEYS="rebind($NAV_KEYS,change)+change-prompt($NAV_PROMPT)"
@@ -365,6 +368,13 @@ case "${1:-}" in
   fi
   exit 0
   ;;
+--new)
+  # Run through run-shell when n is pressed (see the end of this script):
+  # close the picker's popup and show the agent menu for the pane it was
+  # opened over. h in that menu comes back here.
+  tmux display-popup -C -c "$2"
+  exec "$DIR/choose-agent" "$2" "$3" picker
+  ;;
 --open)
   # Run through run-shell once a session is picked (see the end of this
   # script): close the picker's popup and open the session in its own,
@@ -428,18 +438,21 @@ if fzf_at_least 0 59; then
   # shellcheck disable=SC2016 # expanded by fzf's shell
   opts+=(--no-input --info inline-right --no-separator
     --prompt "$NAV_PROMPT" --header "$NAV_HEADER"
-    --bind 'j:down,k:up,l:accept,h:abort,q:abort,g:first,G:last'
+    --bind 'j:down,k:up,l:accept,h:abort,q:abort,g:first,G:last,n:become(printf new)'
     --bind "/:show-input+$TO_SEARCH"
     --bind 'esc:transform:"$AGENT_POPUP_PICKER" --esc')
 elif fzf_at_least 0 46; then
   # shellcheck disable=SC2016 # expanded by fzf's shell
   opts+=(--prompt "$NAV_PROMPT" --header "$NAV_HEADER"
-    --bind 'j:down,k:up,l:accept,h:abort,q:abort,g:first,G:last'
+    --bind 'j:down,k:up,l:accept,h:abort,q:abort,g:first,G:last,n:become(printf new)'
     --bind "/:$TO_SEARCH" --bind "change:$TO_SEARCH"
     --bind 'esc:transform:"$AGENT_POPUP_PICKER" --esc')
+elif fzf_at_least 0 38; then
+  opts+=(--header 'enter: open · ctrl-n: new · ctrl-x: kill' --bind 'ctrl-n:become(printf new)')
 else
   opts+=(--header 'enter: open · ctrl-x: kill')
 fi
+# n (ctrl-n) ends fzf with "new" rather than a row: rows have tabs.
 selected="$(list_rows quick | fzf "${opts[@]}")"
 [ -n "$selected" ] || exit 0
 
@@ -447,6 +460,13 @@ kind="${selected%%$'\t'*}"
 rest="${selected#*$'\t'}"
 target="${rest%%$'\t'*}"
 client="${AGENT_POPUP_CLIENT:-}"
+
+if [ "$selected" = new ]; then
+  # As for a session below: --new closes this popup from outside. Pane ids
+  # are %<number>, safe to paste.
+  tmux run-shell -b "#{q:@agent_popup_dir}/scripts/pick-session --new $client ${AGENT_POPUP_PANE:-}"
+  exec sleep 5
+fi
 
 if [ "$kind" = pane ]; then
   # Show the agent where it runs. The popup closes when this script exits.

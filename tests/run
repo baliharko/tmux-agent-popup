@@ -217,6 +217,12 @@ no_picker() {
   ! pgrep -f "$PLUGIN/scripts/pick-session" >/dev/null || return 1
   sleep 0.2
 }
+# menu_up: the agent menu is on the screen, numbered, and not the picker:
+# both are titled Agents.
+menu_up() {
+  snap && grep -qF "$L Agents $R" "$TMP/snap" && grep -qF '(1)' "$TMP/snap" &&
+    ! grep -qF 'ctrl-x: kill' "$TMP/snap"
+}
 no_popup() { ! t list-clients -F '#{client_session}' | grep -q '^agent-'; }
 main_attached() { t list-clients -F '#{client_session}' | grep -qx main; }
 sessions_named() { [ "$(t list-sessions -F '#S' | grep -c "^agent-$1-")" -eq "$2" ]; }
@@ -755,7 +761,9 @@ else
   wait_for no_picker
   t kill-session -t "=$(session_for claude)"
   press '\x02u'
-  check 'prefix u with no agents running says so' screen_has 'no agents running'
+  check 'prefix u with no agents running opens the agent menu instead' menu_up
+  press '\x1b'
+  wait_for screen_lacks "$L Agents $R"
 
   echo "agents outside the plugin"
   t new-window -d -t main:1 -c "$OTHER" \
@@ -889,9 +897,39 @@ EOF
     fi
     press 'h'
     check 'h closes the picker' no_picker
+    open_picker
+    press 'n'
+    check 'n swaps the picker for the agent menu' menu_up
+    check '... closing the picker' no_picker
+    check "... for the pane's directory, marking what runs there" screen_has '● Claude Code'
+    press 'h'
+    check 'h in that menu goes back to the picker' screen_has 'j/k: move'
+    press 'n'
+    wait_for menu_up
+    press '2'
+    check '... and picking an agent there starts it' popup_on codex
+    check '... for that directory' in_dir "$(t display-message -p -t "=$(session_for codex):" '#{@agent_popup_path}')"
+    press '\x02u'
+    wait_for screen_has 'j/k: move'
+    press 'n'
+    check 'n in a picker opened over an agent popup: the menu for the pane under it' screen_has '● Codex'
+    press '\x1b'
+    wait_for screen_lacks "$L Agents $R"
+    t kill-session -t "=$(session_for codex)"
+  elif fzf_at_least 0 38; then
+    echo "picker keys"
+    goto select-window -t main:0
+    open_picker
+    press '\x0e'
+    check 'ctrl-n swaps the picker for the agent menu' menu_up
+    check '... closing the picker' no_picker
+    press 'h'
+    check 'h in that menu goes back to the picker' screen_has 'ctrl-n: new'
+    press '\x1b'
+    wait_for no_picker
   else
     echo "picker keys"
-    echo "  skipped: needs fzf 0.46 or newer"
+    echo "  skipped: needs fzf 0.38 or newer"
   fi
   t kill-window -t main:3 # livebot; the navigation tests count windows
 fi

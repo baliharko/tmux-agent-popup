@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `n` in the picker (`prefix u`) starts a new agent: it swaps the picker
+  for the `prefix A` menu, for the pane under it, and `h` there goes back.
+  On fzf 0.38 to 0.45, which have no nav mode, it's `ctrl-n`. With no agent
+  running, `prefix u` now brings up that menu instead of saying so.
+
 - Pi is a built-in agent, available in the agent menu and through Ollama
   under Local model. Configure it with `@agent_popup_pi_cmd` and
   `@agent_popup_pi_label`.

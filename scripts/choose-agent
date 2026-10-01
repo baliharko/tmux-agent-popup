@@ -11,6 +11,8 @@
 # Inside an agent popup it dismisses the popup instead, like the toggle key.
 #
 #   choose-agent <client> <pane>                  the agent menu
+#   choose-agent <client> <pane> picker           ... where h goes back to the
+#                                                 session picker (its n key)
 #   choose-agent <client> <pane> models <agent>   the models, for <agent>
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,6 +20,8 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$DIR/helpers.sh"
 
 client="$1" pane="$2" menu="${3:-agents}" agent="${4:-}"
+from_picker=''
+[ "$menu" != picker ] || menu=agents from_picker=1
 MARK=$'\033[32m●\033[0m'
 
 # Keys typed before a menu is up go to the pane under it, and what people
@@ -241,7 +245,11 @@ while :; do
   agents)
     agents_menu "$at"
     case "$PICKED" in
-    '' | back) exit 0 ;;
+    '') exit 0 ;;
+    back)
+      [ -z "$from_picker" ] || exec "$DIR/choose-session" "$client" "$pane"
+      exit 0
+      ;;
     local) menu=local at='' ;;
     *) open_agent "$PICKED" "$client" "$pane" ;;
     esac

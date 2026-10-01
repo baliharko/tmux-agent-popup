@@ -49,7 +49,7 @@ run-shell ~/.tmux/plugins/tmux-agent-popup/agent-popup.tmux
 | ---------- | ------------------------------------------------ |
 | `prefix a` | Toggle the agent popup for the current directory |
 | `prefix A` | Pick an agent from the menu                      |
-| `prefix u` | Pick from all running agents, in any directory   |
+| `prefix u` | Pick from all running agents, or start a new one |
 
 The first time you press `prefix a` in a directory, a menu asks which agent
 to start. After that, `prefix a` toggles that agent's popup: press it inside
@@ -88,7 +88,8 @@ with `●`, and picking it again reopens it without asking for a model.
 
 `prefix u` lists every running agent with a live preview of its screen: the
 plugin's own sessions, and agents you started yourself in an ordinary pane.
-Pressed inside an agent popup, it swaps the popup for the picker.
+Pressed inside an agent popup, it swaps the popup for the picker. With no
+agent running, it brings up the agent menu instead, as `prefix A` does.
 The preview redraws ten times a second, so you can watch an agent work; the
 list (and who's working) updates every second. The preview shows the agent
 as its popup does, colours included, and as wide. On fzf versions without a
@@ -131,8 +132,13 @@ The picker opens in **nav** mode, which shows just the agents and the keys:
 | `l` / `enter`        | Open the agent: in its popup, or switch to its pane      |
 | `h` / `q` / `esc`    | Close the picker                                         |
 | `g` / `G`            | First / last agent                                       |
+| `n`                  | New agent: the agent menu, for the pane you were in      |
 | `/`                  | Search                                                   |
 | `ctrl-x`             | Kill it: the whole session, or just the agent in a pane  |
+
+`n` swaps the picker for the `prefix A` menu, for the directory of the pane
+under the picker (under the agent popup, if you opened the picker from one).
+`h` there goes back to the picker.
 
 In **search** mode an input line comes up: every key types into the filter,
 and `enter` opens the highlighted match. `esc` hides the input line and goes
@@ -143,7 +149,7 @@ Nav and search mode need fzf 0.46 or newer, and hiding the input line in nav
 mode 0.59. On fzf 0.46 to 0.58 the input line always shows, and any other
 letter also starts a search. With older fzf the picker is a plain fzf list:
 type to filter, arrows to move, `enter` to open, `ctrl-x` to kill, `esc` to
-close.
+close, and from fzf 0.38 `ctrl-n` for a new agent.
 
 A session opens in a popup of its own, titled with the agent's name, in
 place of the picker's.
