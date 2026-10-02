@@ -979,6 +979,89 @@ check '... not in the agent session' windows_in_session claude 1
 settle
 check 'closing popups this way reports no errors' no_view_mode
 
+echo "resizing"
+# frame <file>: the first popup or menu frame on the screen in <file>, as
+# "<width> <height> <column>".
+frame() {
+  "$PYTHON" - "$1" <<'EOF'
+import sys
+rows = open(sys.argv[1], encoding="utf-8").read().split("\n")
+top = next(i for i, row in enumerate(rows) if "\u256d" in row)
+x = rows[top].index("\u256d")
+bottom = next(i for i in range(top, len(rows)) if rows[i][x:x + 1] == "\u2570")
+print(rows[top].index("\u256e", x) - x + 1, bottom - top + 1, x)
+EOF
+}
+# frame_sized <width> <height>
+frame_sized() {
+  local f
+  snap && f="$(frame "$TMP/snap")" && [ "${f% *}" = "$1 $2" ]
+}
+# frame_centred <terminal width>: as tmux places a popup.
+frame_centred() {
+  local f
+  snap && f="$(frame "$TMP/snap")" && [ "${f##* }" -eq $((($1 - ${f%% *}) / 2)) ]
+}
+client_sized() { [ "$(t list-clients -F '#{client_width} #{client_height}' | head -n 1)" = "$1 $2" ]; }
+# resize <width> <height>: the terminal, as dragging its window would.
+resize() {
+  printf '#resize %s %s\n' "$2" "$1" >&3
+  wait_for client_sized "$1" "$2"
+}
+window_sized() { [ "$(t display-message -p -t "=$(session_for "$1"):" '#{window_width} #{window_height}')" = "$2 $3" ]; }
+goto select-window -t main:0
+press '\x02a'
+# Lost if the last section's popup was still closing; pressed again then.
+wait_up_to 2 popup_on claude || press '\x02a'
+check 'a popup is 90% of the terminal' frame_sized 90 27
+resize 120 40
+check 'a bigger terminal: the popup grows to 90% of it' frame_sized 108 36
+check '... the agent still in it' popup_on claude
+check '... and the size of it' window_sized claude 106 34
+resize 100 30
+check 'a smaller one: it shrinks back to 90%' frame_sized 90 27
+check '... and so does the agent' window_sized claude 88 25
+printf '#resize 34 110\n#resize 37 115\n' >&3
+resize 120 40
+check 'resized in steps, as by dragging: 90% of where it ends' frame_sized 108 36
+resize 100 30
+wait_for frame_sized 90 27
+press '\x02a'
+wait_for no_popup
+press '\x02A'
+wait_for menu_up
+press 'g'
+press 'j' # Codex
+sleep 0.3
+resize 120 40
+settle
+check 'a menu stays up through a resize' menu_up
+check '... in the middle' frame_centred 120
+press '\r'
+check '... still on the item it was on' popup_on codex
+press '\x02a'
+wait_for no_popup
+t kill-session -t "=$(session_for codex)"
+if command -v fzf >/dev/null 2>&1; then
+  open_picker
+  resize 100 30
+  check 'the picker, too' frame_sized 90 27
+  check '... still listing the agents' screen_has '● '
+  press '\x03'
+  wait_for no_picker
+  resize 120 40
+fi
+load_plugin
+check 'the plugin, loaded again, adds no second hook' \
+  [ "$(t show-hooks -g client-resized | grep -c resize-popup)" -eq 1 ]
+t display-popup -c "$(t list-clients -F '#{client_name}' | head -n 1)" -w 20 -h 5 -b rounded 'sleep 30' &
+check 'a popup of your own' frame_sized 20 5
+resize 100 30
+settle
+check '... is left as tmux has it' frame_sized 20 5
+t display-popup -C -c "$(t list-clients -F '#{client_name}' | head -n 1)"
+wait $!
+
 echo "two terminals"
 # A second terminal on the same session, as Ghostty's quick terminal can be.
 # Each shows the agent in a popup of its own, and keys pressed in a popup act

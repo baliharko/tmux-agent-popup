@@ -18,7 +18,9 @@
 # can't be picked, a separator. What was picked goes to
 # $AGENT_POPUP_MENU.choice: the row's number, from 0, or "back". Nothing if
 # the menu was closed. The highlight starts on row $AGENT_POPUP_MENU_START,
-# in $AGENT_POPUP_MENU_SELECTED (SGR parameters).
+# in $AGENT_POPUP_MENU_SELECTED (SGR parameters). The row it's on is kept
+# in $AGENT_POPUP_MENU.at, for a menu opened again when the terminal is
+# resized.
 set -u
 # First thing, so keys typed while the popup opens don't show. They're
 # kept for the first read.
@@ -94,6 +96,7 @@ draw() {
     [ "$i" -eq $((last - 1)) ] || out+=$'\r\n'
   done
   printf '%s' "$out"
+  printf '%s' "$sel" >"$AGENT_POPUP_MENU.at"
 }
 
 sel="${AGENT_POPUP_MENU_START:-0}"

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# The client-resized hook (agent-popup.tmux). When one of the plugin's popups
+# is open on the client, it closes it, and the process that opened it opens
+# it again at the new size (shown_popup in helpers.sh). Other popups are left
+# alone.
+#
+#   resize-popup <client>
+#
+# tmux runs the hook for every SIGWINCH, size changed or not, and a
+# terminal dragged to a new size sends many: only the last does anything,
+# once the size has stayed the same for a moment.
+set -u
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=helpers.sh
+. "$DIR/helpers.sh"
+
+client="$1"
+note="@agent_popup_shown_$client"
+
+state="$(tmux display-message -p "#{$note}")"
+case "$state" in
+'' | *' resize') exit 0 ;; # not ours, or being opened again already
+esac
+client_size "$client"
+case "$SIZE" in
+'' | "${state#* }") exit 0 ;; # gone, or the size it opened at
+esac
+pid="${state%% *}"
+if ! kill -0 "$pid" 2>/dev/null; then
+  # Its process is gone, so the popup is too.
+  tmux if-shell -F "#{==:#{$note},$state}" "set-option -gu '$note'"
+  exit 0
+fi
+
+size="$SIZE"
+sleep 0.1
+client_size "$client"
+[ "$SIZE" = "$size" ] || exit 0 # resized again; that hook's turn
+
+# Only if it's still the same popup. The file goes first, as the process
+# looks for it as soon as its popup closes, and stays even if the popup has
+# gone in the meantime: tmux can run the hook twice for one resize, and the
+# other may have closed it.
+popup_resized "$pid"
+: >"$RESIZED"
+tmux if-shell -F "#{==:#{$note},$state}" \
+  "set-option -g '$note' '$pid resize' ; display-popup -C -c '$client'"

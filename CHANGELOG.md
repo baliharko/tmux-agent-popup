@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Popups follow the terminal's size: resize the window (or bring up a
+  terminal of another size on the same tmux, like Ghostty's quick terminal)
+  and an open agent popup, the picker or a menu is opened again at
+  `@agent_popup_width` × `@agent_popup_height` of the new size, in the
+  middle. tmux itself only shrinks a popup to fit, and never grows it back.
+  A menu stays on the item it was on; the picker starts afresh. Popups of
+  your own are left alone. This adds a `client-resized` hook, next to any
+  of yours.
+
 - `n` in the picker (`prefix u`) starts a new agent: it swaps the picker
   for the `prefix A` menu, for the pane under it, and `h` there goes back.
   On fzf 0.38 to 0.45, which have no nav mode, it's `ctrl-n`. With no agent

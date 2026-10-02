@@ -27,8 +27,9 @@ MARK=$'\033[32m●\033[0m'
 # Keys typed before a menu is up go to the pane under it, and what people
 # know they type quickly, like prefix A 5 3 1. So what the menus need comes
 # up front, in one tmux call, where each takes a few milliseconds: the
-# pane's agent (set in agent sessions) and directory, the terminal's size,
-# the options the menus read with the built-in agents' labels, and the agent
+# pane's agent (set in agent sessions) and directory, the terminal's size
+# (display-message -c has the client's only in its session, so -t), the
+# options the menus read with the built-in agents' labels, and the agent
 # sessions, last as they take a line each.
 options=(@agent_popup_agents @agent_popup_local_agents @agent_popup_last_model
   @agent_popup_border @agent_popup_border_style menu-style menu-selected-style
@@ -36,7 +37,7 @@ options=(@agent_popup_agents @agent_popup_local_agents @agent_popup_last_model
   @agent_popup_copilot_label @agent_popup_opencode_label @agent_popup_pi_label)
 cmds=(display-message -p -t "$pane" '#{@agent_popup_agent}' \;
   display-message -p -t "$pane" '#{pane_current_path}' \;
-  display-message -p -c "$client" '#{client_width} #{client_height}')
+  display-message -p -c "$client" -t "$pane" '#{client_width} #{client_height}')
 for name in "${options[@]}"; do
   cmds+=(\; display-message -p "#{$name}")
 done

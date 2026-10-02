@@ -132,6 +132,18 @@ popup_host() {
   tmux display-message -p -t "$2" "#{@agent_popup_host_$1}"
 }
 
+# client_size <client>
+# Sets SIZE to <client>'s terminal size, "<width> <height>", or nothing if
+# it's gone. Not from display-message -p -c: unless the current session is
+# <client>'s, it gives another client's.
+client_size() {
+  local name rest
+  SIZE=''
+  while read -r name rest; do
+    [ "$name" != "$1" ] || SIZE="$rest"
+  done < <(tmux list-clients -F '#{client_name} #{client_width} #{client_height}')
+}
+
 # attached_client <name>
 # True when a client of that name is attached right now.
 attached_client() {
@@ -240,18 +252,67 @@ border_style() {
   get_option @agent_popup_border_style fg=green
 }
 
+# A popup keeps the size it opened with: tmux shrinks one to fit a smaller
+# terminal, but never grows it back, or fits it to a bigger one. So the
+# plugin's popups are opened again at the new size. Each notes the process
+# that opened it and the terminal's size then, in
+# @agent_popup_shown_<client>, as "<pid> <width> <height>". On a resize,
+# resize-popup (next to this file) leaves the file popup_resized names for
+# the process, marks the note "<pid> resize" and closes the popup; the
+# process opens it again (reopen_popup). The file saves the process a tmux
+# call after every popup, which between two menus would lose keys typed
+# quickly; so too the note stays when the popup closes: the next popup
+# replaces it, and resize-popup ignores one whose process is gone.
+#
+# shown_popup <client> <size>
+# The tmux command, to go before the display-popup in the same call, that
+# notes the popup about to open on <client>. <size> is the terminal's, as
+# "<width> <height>". Sets SHOWN. A file left by a resize while this process
+# had no popup open is for none of its popups.
+shown_popup() {
+  local RESIZED
+  popup_resized $$
+  [ ! -f "$RESIZED" ] || rm -f "$RESIZED"
+  SHOWN=(set-option -g "@agent_popup_shown_$1" "$$ $2" \;)
+}
+
+# popup_resized <pid>: sets RESIZED to the file resize-popup leaves for the
+# process <pid> when it closes its popup.
+popup_resized() {
+  RESIZED="${TMPDIR:-/tmp}/agent-popup-$1.resized"
+}
+
+# reopen_popup <client>
+# After a popup noted by shown_popup closes: true when resize-popup closed
+# it, to be opened again at the terminal's new size. The file can be left
+# by a resize that came as the popup was closing anyway; the note says.
+reopen_popup() {
+  local RESIZED
+  popup_resized $$
+  [ -f "$RESIZED" ] || return 1
+  rm -f "$RESIZED"
+  [ "$(tmux display-message -p "#{@agent_popup_shown_$1}")" = "$$ resize" ]
+}
+
 # show_popup <client> <title> <display-popup args...>
-# A popup in the configured size and border. Blocks until it closes.
+# A popup in the configured size and border. Blocks until it closes, and
+# opens it again when the terminal is resized.
 show_popup() {
-  local client="$1" title="$2"
+  local client="$1" title="$2" status SIZE SHOWN
   shift 2
-  tmux display-popup -c "$client" \
-    -w "$(get_option @agent_popup_width 90%)" \
-    -h "$(get_option @agent_popup_height 90%)" \
-    -b "$(get_option @agent_popup_border rounded)" \
-    -S "$(border_style)" \
-    -T "$(titled "$title")" \
-    "$@"
+  while :; do
+    client_size "$client"
+    shown_popup "$client" "$SIZE"
+    status=0
+    tmux "${SHOWN[@]}" display-popup -c "$client" \
+      -w "$(get_option @agent_popup_width 90%)" \
+      -h "$(get_option @agent_popup_height 90%)" \
+      -b "$(get_option @agent_popup_border rounded)" \
+      -S "$(border_style)" \
+      -T "$(titled "$title")" \
+      "$@" || status=$?
+    reopen_popup "$client" || return "$status"
+  done
 }
 
 # colour_sgr <30|40> <colour>
@@ -333,7 +394,7 @@ text_width() {
 # the next menu, in MENU_SIZE and MENU_SGR.
 show_menu() {
   local client="$1" title="$2" start="$3" keys=() labels=() widths=() width=0 hints=0
-  local i inner hint pad row cols rows file frame border style sep='' WIDTH VALUE
+  local i inner hint pad row cols rows file frame border style sep='' WIDTH VALUE SIZE SHOWN
   shift 3
   MENU_CHOICE=''
   while [ "$#" -ge 2 ]; do
@@ -371,11 +432,7 @@ show_menu() {
     fi
     printf '%s\037%s\n' "${keys[i]}" "$row"
   done >"$file"
-  # tmux refuses a popup bigger than the terminal; the menu then scrolls.
-  [ -n "${MENU_SIZE:-}" ] ||
-    MENU_SIZE="$(tmux display-message -p -c "$client" '#{client_width} #{client_height}')"
   [ -n "${MENU_SGR:-}" ] || MENU_SGR="$(style_sgr "$(get_option menu-selected-style '')")"
-  cols="${MENU_SIZE% *}" rows="${MENU_SIZE#* }"
   option_value @agent_popup_border_style
   frame="${VALUE:-fg=green}" # as border_style
   if [ "$frame" = default ]; then
@@ -386,19 +443,33 @@ show_menu() {
   border="${VALUE:-rounded}"
   option_value menu-style
   style="${VALUE:-default}"
-  # shellcheck disable=SC2016 # expanded by the popup's shell
-  tmux display-popup -c "$client" \
-    -w "$((inner + 2 > cols ? cols : inner + 2))" \
-    -h "$((${#labels[@]} + 2 > rows ? rows : ${#labels[@]} + 2))" \
-    -b "$border" -s "$style" -S "${frame:-default}" \
-    -T "$(titled "$title")" \
-    -e "AGENT_POPUP_MENU_SCRIPT=${BASH_SOURCE[0]%/*}/menu" \
-    -e "AGENT_POPUP_MENU=$file" -e "AGENT_POPUP_MENU_START=$start" \
-    -e "AGENT_POPUP_MENU_SELECTED=$MENU_SGR" \
-    -E 'exec "$AGENT_POPUP_MENU_SCRIPT"' || :
+  # Opened again, on the item it was on, when the terminal is resized (see
+  # shown_popup).
+  while :; do
+    # tmux refuses a popup bigger than the terminal; the menu then scrolls.
+    if [ -z "${MENU_SIZE:-}" ]; then
+      client_size "$client"
+      MENU_SIZE="$SIZE"
+    fi
+    cols="${MENU_SIZE% *}" rows="${MENU_SIZE#* }"
+    shown_popup "$client" "$MENU_SIZE"
+    # shellcheck disable=SC2016 # expanded by the popup's shell
+    tmux "${SHOWN[@]}" display-popup -c "$client" \
+      -w "$((inner + 2 > cols ? cols : inner + 2))" \
+      -h "$((${#labels[@]} + 2 > rows ? rows : ${#labels[@]} + 2))" \
+      -b "$border" -s "$style" -S "${frame:-default}" \
+      -T "$(titled "$title")" \
+      -e "AGENT_POPUP_MENU_SCRIPT=${BASH_SOURCE[0]%/*}/menu" \
+      -e "AGENT_POPUP_MENU=$file" -e "AGENT_POPUP_MENU_START=$start" \
+      -e "AGENT_POPUP_MENU_SELECTED=$MENU_SGR" \
+      -E 'exec "$AGENT_POPUP_MENU_SCRIPT"' || :
+    reopen_popup "$client" || break
+    MENU_SIZE=''
+    [ ! -f "$file.at" ] || IFS= read -r start <"$file.at"
+  done
   # shellcheck disable=SC2034 # for the caller
   [ ! -f "$file.choice" ] || IFS= read -r MENU_CHOICE <"$file.choice"
-  rm -f "$file" "$file.choice"
+  rm -f "$file" "$file.choice" "$file.at"
 }
 
 # show_agent_popup <client> <session> <title>

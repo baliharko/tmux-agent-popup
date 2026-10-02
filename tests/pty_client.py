@@ -7,6 +7,7 @@ e.g. "\\x02a" for C-b a) or, when it starts with "#snap <file>", dumps the
 client's rendered screen to <file>. Output is rendered with pyte, so a
 snapshot shows what a terminal would: popups, menus and their titles.
 "#fg <file> <char>" writes the colour of the first <char> on screen to <file>.
+"#resize <rows> <cols>" resizes the terminal, as dragging its window would.
 
 Like a real terminal, it answers queries for its default colours (OSC 10 and
 11) and its palette (OSC 4), with FG, BG and PALETTE below.
@@ -92,12 +93,17 @@ def main():
                     # screen, as pyte names it ("green", "default", or hex),
                     # or "none" if it isn't there.
                     path, char = line[len("#fg "):].rsplit(" ", 1)
-                    colour = next((cell.fg for y in range(ROWS)
-                                   for cell in (screen.buffer[y][x] for x in range(COLS))
+                    colour = next((cell.fg for y in range(screen.lines)
+                                   for cell in (screen.buffer[y][x] for x in range(screen.columns))
                                    if cell.data == char), "none")
                     with open(path + ".tmp", "w") as out:
                         out.write(colour + "\n")
                     os.rename(path + ".tmp", path)
+                elif line.startswith("#resize "):
+                    # The kernel tells the client with a SIGWINCH.
+                    rows, cols = map(int, line.split()[1:])
+                    screen.resize(rows, cols)
+                    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
                 else:
                     keys = codecs.decode(line, "unicode_escape").encode("latin-1")
                     os.write(fd, keys)

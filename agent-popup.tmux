@@ -46,6 +46,22 @@ if [ -n "$root_key" ]; then
   bind_script root "$root_key" toggle
 fi
 
+# Popups opened again at the new size when a terminal is resized
+# (scripts/resize-popup). Not for a client in an agent session, as each
+# popup's own is when it opens: that would start a process for nothing.
+# Hooks are arrays, and yours stay: this one goes where an earlier load put
+# it, or else at the end.
+hook="if-shell -F '#{@agent_popup_agent}' '' {
+  run-shell -b \"#{q:@agent_popup_dir}/scripts/resize-popup #{q:hook_client}\"
+}"
+index="$(tmux show-hooks -g client-resized |
+  sed -n 's/^client-resized\[\([0-9]*\)\] .*scripts\/resize-popup.*/\1/p' | head -n 1)"
+if [ -n "$index" ]; then
+  tmux set-hook -g "client-resized[$index]" "$hook"
+else
+  tmux set-hook -ga client-resized "$hook"
+fi
+
 # Navigation keys, and c for a new window, pressed inside an agent popup act
 # on the window under it: the popup closes and the key does what it normally
 # does there. Each key's own binding is copied as-is into the

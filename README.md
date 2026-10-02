@@ -292,6 +292,10 @@ The same `_cmd` and `_label` options override the built-in agents.
 - Keep API keys out of the `_cmd` options: tmux options are readable by
   anything that can talk to your tmux server. Let the agents read keys from
   their usual config or environment.
+- tmux keeps a popup at the size it opened with, only shrinking it to fit a
+  smaller terminal. So when a terminal is resized, the plugin opens its
+  popup there again at the new size, through a `client-resized` hook added
+  next to any of yours. The agent keeps running; the picker starts afresh.
 - `destroy-unattached on` destroys agent sessions as soon as they are
   created, so the plugin can't work with it.
 
