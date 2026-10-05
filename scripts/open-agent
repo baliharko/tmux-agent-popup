@@ -1,35 +1,54 @@
 #!/usr/bin/env bash
 # Open an agent for the directory of a pane, in a popup attached to that
-# agent's own tmux session. Creates the session the first time.
+# agent's own tmux session: the one used last, if the agent runs there in
+# more than one. Creates the session the first time.
 #
-#   open-agent <agent> <client> <pane> [<model>]
+#   open-agent [--new] <agent> <client> <pane> [<model>]
 #
 # Callers pass #{client_name} and #{pane_id}. Everything else is looked up
 # from those, so paths never go through shell quoting.
 #
+# --new starts another session of the agent, even if one runs there
+# already. Each has a number after the first, #2, #3 and so on, in its
+# title and the picker.
+#
 # <agent> can be one on a local model, "<agent>+local" (choose-agent), which
 # starts with `ollama launch <agent> --model <model>`. Without a model it
-# only reopens a session already running, and otherwise asks for one.
+# only reopens a session already running, and otherwise asks for one; with
+# one it always starts a new session.
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
 . "$DIR/helpers.sh"
 
+new=''
+if [ "$1" = --new ]; then
+  new=1
+  shift
+fi
 agent="$1" client="$2" pane="$3" model="${4:-}"
+[ -z "$model" ] || new=1
 
 dir="$(tmux display-message -p -t "$pane" '#{pane_current_path}')"
 [ -n "$dir" ] || exit 0
-session="$(session_name "$agent" "$dir")"
 
-case "$agent" in
-*+local)
-  if tmux has-session -t "=$session" 2>/dev/null; then
-    model="$(tmux display-message -p -t "=$session:" '#{@agent_popup_model}')"
-  elif [ -z "$model" ]; then
-    exec "$DIR/choose-agent" "$client" "$pane" models "${agent%+local}"
-  fi
-  ;;
-esac
+session='' number=''
+if [ -z "$new" ]; then
+  session="$(dir_sessions "$dir" | awk -v a="$agent" '$1 == a { print $2; exit }')"
+fi
+if [ -n "$session" ]; then
+  # The number is digits and comes first; a model can have ":" in it.
+  details="$(tmux display-message -p -t "=$session:" '#{@agent_popup_number}:#{@agent_popup_model}')"
+  number="${details%%:*}" model="${details#*:}"
+else
+  case "$agent" in
+  *+local)
+    [ -n "$model" ] || exec "$DIR/choose-agent" "$client" "$pane" models "${agent%+local}"
+    ;;
+  esac
+  free_session "$agent" "$dir"
+  session="$SESSION" number="$NUMBER"
+fi
 
 # Agents ask the terminal for its colours (OSC 10 and 11) and palette (OSC
 # 4) to fit their screens to it, and tmux answers from, or asks, a terminal
@@ -72,14 +91,16 @@ answering=()
   "exec #{q:@agent_popup_dir}/scripts/answer-background $answer" \;
   set-option -p -t "=$session:" @agent_popup_answering on)
 
-# An agent on a local model notes its model, for titles and the menus, and
-# the model becomes the first one offered next time.
+# A session after the first notes its number, and an agent on a local model
+# its model, for titles and the menus; the model becomes the first one
+# offered next time.
 noting=()
 if ! tmux has-session -t "=$session" 2>/dev/null; then
+  [ -z "$number" ] || noting=(\; set-option -t "=$session:" @agent_popup_number "$number")
   case "$agent" in
   *+local)
     cmd="$(get_option @agent_popup_local_cmd 'ollama launch') ${agent%+local} --model $model"
-    noting=(\; set-option -t "=$session:" @agent_popup_model "$model" \;
+    noting+=(\; set-option -t "=$session:" @agent_popup_model "$model" \;
       set-option -g @agent_popup_last_model "$model")
     ;;
   *) cmd="$(agent_option "$agent" cmd)" ;;
@@ -106,7 +127,7 @@ fi
 # If the agent has already exited (e.g. on a bad flag), the session is gone
 # and set-option fails, or, under a global remain-on-exit, its pane is dead.
 target="=$session:"
-label="$(agent_label "$agent" "$model")"
+label="$(agent_label "$agent" "$model" "$number")"
 if ! tmux set-option -t "$target" @agent_popup_agent "$agent" \; \
   set-option -t "$target" @agent_popup_path "$dir" \; \
   set-option -t "$target" status "$(get_option @agent_popup_status off)" \; \
@@ -114,7 +135,7 @@ if ! tmux set-option -t "$target" @agent_popup_agent "$agent" \; \
   set-option -w -t "$target" remain-on-exit off ${colouring[@]+"${colouring[@]}"} 2>/dev/null ||
   [ "$(tmux display-message -p -t "$target" '#{pane_dead}')" = 1 ]; then
   tmux kill-session -t "=$session" 2>/dev/null
-  tmux display-message -c "$client" "agent-popup: $label exited straight away"
+  tmux display-message -c "$client" "agent-popup: ${label//\#/##} exited straight away"
   exit 0
 fi
 

@@ -5,8 +5,9 @@
 Open coding agents (Claude Code, Codex, GitHub Copilot CLI, OpenCode, Pi, or
 anything else you configure) in a large centered tmux popup.
 
-Each agent runs in its own tmux session per project directory. Hide the popup
-and the agent keeps working; bring it back and you're where you left off.
+Each agent runs in its own tmux session per project directory, or several
+side by side if you like. Hide the popup and the agent keeps working; bring
+it back and you're where you left off.
 
 Inspired by [craftzdog/tmux-claude-hatch](https://github.com/craftzdog/tmux-claude-hatch).
 
@@ -59,11 +60,19 @@ To run a different agent in the same directory, press `prefix A`. Agents
 already running there are marked with `●`. Once several are running,
 `prefix a` reopens the one you used last.
 
+To run the same agent more than once in a directory, say two Claude Codes
+on separate tasks, highlight it in the `prefix A` menu and press `n`. Each
+session after the first is numbered: its popup is titled `Claude Code #2`,
+and the picker lists it that way. Picking an agent in the menu as usual
+reopens its session you used last, as `prefix a` does; to get to another,
+use the picker (`prefix u`).
+
 Quitting the agent itself closes the popup and ends its session. `prefix d`
 also hides the popup.
 
 In the menu, press an item's number to pick it, or move with `j`/`k` or the
-arrow keys and pick with `l`, `→` or `enter`. `h` or `←` goes back to the
+arrow keys and pick with `l`, `→` or `enter`; `n` picks it for a new
+session. `h` or `←` goes back to the
 menu before (see Local models), or closes the first one, as `q` and `esc`
 do. A mouse click picks too.
 
@@ -82,7 +91,9 @@ agent's usual one in the same directory. Its popup is titled with the model
 (`Copilot · qwen3.5:35b-a3b-coding-nvfp4`), and the picker shows it after
 the agent's name. `prefix a` reopens it like any other agent; to switch
 models, quit the agent and pick another. While one runs, the menus mark it
-with `●`, and picking it again reopens it without asking for a model.
+with `●`, and picking it again reopens it without asking for a model. `n`
+on it asks for one, and starts another session next to it: on another
+model, if you like.
 
 ### Session picker
 
@@ -281,8 +292,9 @@ The same `_cmd` and `_label` options override the built-in agents.
   draws RGB colours on (the `RGB` terminal feature). Reloading the config
   learns them again, e.g. after changing your terminal's theme. Agents
   already running keep the colours they started with.
-- Agent sessions are named `agent-<agent>-<directory>-<hash>` and appear in
-  `prefix s` like any other session. If you switch to one there, `prefix a`
+- Agent sessions are named `agent-<agent>-<directory>-<hash>`, with `-2`,
+  `-3` and so on after it for more than one of an agent in a directory,
+  and appear in `prefix s` like any other session. If you switch to one there, `prefix a`
   won't detach your terminal; switch back with `prefix s` or `prefix (`.
 - Agents are started by the tmux server, so they get the environment tmux was
   started with, not your pane's. For per-project environments, wrap the

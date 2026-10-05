@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Several sessions of one agent in a directory: highlight the agent in the
+  `prefix A` menu and press `n` to start another next to the one running,
+  e.g. two Claude Codes on separate tasks. Sessions after the first are
+  numbered, `Claude Code #2`, in their popups' titles and the picker.
+  Picking the agent as usual, or `prefix a`, reopens the session used
+  last. Under Local model, `n` asks for the model, so the same agent can
+  run on two models at once.
+
 - Popups follow the terminal's size: resize the window (or bring up a
   terminal of another size on the same tmux, like Ghostty's quick terminal)
   and an open agent popup, the picker or a menu is opened again at

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The main key. Inside an agent popup it dismisses the popup; the agent keeps
-# running. Anywhere else, it reopens the agent last used in the pane's
-# directory, or shows the agent menu when none is running there yet.
+# running. Anywhere else, it reopens the agent session last used in the
+# pane's directory, or shows the agent menu when none is running there yet.
 #
 #   toggle <client> <pane>
 set -u
@@ -16,8 +16,9 @@ leave_agent_session "$client" "$pane" && exit 0
 dir="$(tmux display-message -p -t "$pane" '#{pane_current_path}')"
 [ -n "$dir" ] || exit 0
 
-agent="$(dir_agents "$dir" | head -n 1)"
+# open-agent reopens the agent's session used last here: this one.
+agent="$(dir_sessions "$dir" | head -n 1)"
 if [ -n "$agent" ]; then
-  exec "$DIR/open-agent" "$agent" "$client" "$pane"
+  exec "$DIR/open-agent" "${agent%% *}" "$client" "$pane"
 fi
 exec "$DIR/choose-agent" "$client" "$pane"

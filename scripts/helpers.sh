@@ -67,14 +67,15 @@ agent_option() {
   get_option "@agent_popup_$1_$2" "$DEFAULT"
 }
 
-# agent_label <agent> [<model>]
+# agent_label <agent> [<model>] [<number>]
 # An agent's name for titles and messages. <agent> can be one on a local
 # model ("copilot+local", see local_agents), which is named after its own
-# agent and the model: "Copilot · qwen3".
+# agent and the model: "Copilot · qwen3". A second session of an agent in
+# the same directory has its number after it: "Claude Code #2".
 agent_label() {
   local label
   label="$(agent_option "${1%+local}" label)"
-  printf '%s' "$label${2:+ · $2}"
+  printf '%s' "$label${2:+ · $2}${3:+ #$3}"
 }
 
 # configured_agents
@@ -168,22 +169,24 @@ leave_agent_session() {
 # One line per agent session, fields separated by ":": agent, session, when
 # it was last attached (epoch seconds, 0 if never), how many clients are
 # attached, the agent's tty, whether it rang the bell since it was last
-# looked at (1 or 0), and its directory. The separator has to be printable:
-# tmux 3.4 prints control characters in -F output as escapes like \037.
-# Agent and session names can't contain ":"; the directory can, so it comes
-# last. Other sessions give lines with no agent, which this leaves out.
-AGENT_SESSIONS_FORMAT='#{@agent_popup_agent}:#{session_name}:#{?session_last_attached,#{session_last_attached},0}:#{session_attached}:#{pane_tty}:#{window_bell_flag}:#{@agent_popup_path}'
+# looked at (1 or 0), its number (free_session; nothing for the first), and
+# its directory. The separator has to be printable: tmux 3.4 prints control
+# characters in -F output as escapes like \037. Agent and session names
+# can't contain ":"; the directory can, so it comes last. Other sessions
+# give lines with no agent, which this leaves out.
+AGENT_SESSIONS_FORMAT='#{@agent_popup_agent}:#{session_name}:#{?session_last_attached,#{session_last_attached},0}:#{session_attached}:#{pane_tty}:#{window_bell_flag}:#{@agent_popup_number}:#{@agent_popup_path}'
 agent_sessions() {
   tmux list-sessions -F "$AGENT_SESSIONS_FORMAT" | awk -F: '$1 != ""'
 }
 
-# dir_agents <dir>
-# Agents with a running session for <dir>, most recently attached first.
-dir_agents() {
+# dir_sessions <dir>
+# The agent sessions for <dir>, most recently attached first: a line each,
+# "<agent> <session>".
+dir_sessions() {
   agent_sessions |
     AGENT_DIR="$1" awk -F: '
-      { dir = $0; for (i = 1; i <= 6; i++) sub(/^[^:]*:/, "", dir) }
-      dir == ENVIRON["AGENT_DIR"] { print $3 "\t" $1 }' |
+      { dir = $0; for (i = 1; i <= 7; i++) sub(/^[^:]*:/, "", dir) }
+      dir == ENVIRON["AGENT_DIR"] { print $3 "\t" $1 " " $2 }' |
     sort -rn | cut -f2
 }
 
@@ -389,8 +392,8 @@ text_width() {
 # highlight starts on item <start>, from 0. The colours follow tmux's
 # menu-style and menu-selected-style, and with @agent_popup_border_style
 # "default" the frame menu-border-style. Blocks until it closes, then sets
-# MENU_CHOICE to the number of the item picked, "back", or nothing if it
-# was closed. The terminal's size and the highlight's colours are kept, for
+# MENU_CHOICE to the number of the item picked, "new <number>" if it was
+# picked with n, "back", or nothing if it was closed. The terminal's size and the highlight's colours are kept, for
 # the next menu, in MENU_SIZE and MENU_SGR.
 show_menu() {
   local client="$1" title="$2" start="$3" keys=() labels=() widths=() width=0 hints=0
@@ -484,13 +487,29 @@ show_agent_popup() {
 }
 
 # session_name <agent> <dir>
-# One session per agent + directory: agent-<agent>-<basename>-<crc of path>,
-# where <agent> can be one on a local model, e.g. "copilot+local". The
-# basename is only there for humans. tmux reads . and : in a target as
-# window/pane separators, so anything outside [A-Za-z0-9_-] becomes _.
+# The first session of an agent in a directory:
+# agent-<agent>-<basename>-<crc of path>, where <agent> can be one on a
+# local model, e.g. "copilot+local". The basename is only there for humans.
+# tmux reads . and : in a target as window/pane separators, so anything
+# outside [A-Za-z0-9_-] becomes _.
 session_name() {
   local base crc
   base="$(printf '%s' "${2##*/}" | LC_ALL=C tr -c 'A-Za-z0-9_-' '_' | cut -c1-24)"
   crc="$(printf '%s' "$2" | cksum)"
   printf 'agent-%s-%s-%08x' "$1" "$base" "${crc%% *}"
+}
+
+# free_session <agent> <dir>
+# A name for a new session of <agent> in <dir>: session_name's, or while
+# that's taken, the same with -2, -3 and so on after it. Sets SESSION to it,
+# and NUMBER to its number, or nothing for session_name's.
+free_session() {
+  local base taken n=1
+  base="$(session_name "$1" "$2")"
+  taken=" $(tmux list-sessions -F '#{session_name}' | tr '\n' ' ') "
+  SESSION="$base" NUMBER=''
+  while [[ "$taken" == *" $SESSION "* ]]; do
+    n=$((n + 1))
+    SESSION="$base-$n" NUMBER="$n"
+  done
 }

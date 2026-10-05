@@ -461,6 +461,46 @@ check 'prefix a falls back to the remaining agent' popup_on claude
 press '\x02A'
 check 'prefix A inside the popup dismisses it' no_popup
 
+echo "several sessions of one agent"
+press '\x02A'
+wait_for menu_up
+press 'n' # on the first item: Claude Code, which runs here
+check 'n in the menu starts another session of the highlighted agent' sessions_named claude 2
+check '... in a popup titled with its number' screen_has "$L Claude Code #2 $R"
+check '... named like the first, with its number after it' \
+  [ "$(t list-sessions -F '#S' | grep -c '^agent-claude-my_proj_x_nvim-[0-9a-f]*-2$')" -eq 1 ]
+press '\x02a'
+wait_for no_popup
+press '\x02a'
+check 'prefix a reopens the session used last' screen_has "$L Claude Code #2 $R"
+press '\x02a'
+wait_for no_popup
+press '\x02A'
+wait_for menu_up
+press '1'
+check '... and so does picking the agent in the menu' screen_has "$L Claude Code #2 $R"
+check '... starting no other' sessions_named claude 2
+press '\x02a'
+wait_for no_popup
+if command -v fzf >/dev/null 2>&1; then
+  open_picker
+  check 'the picker lists both, the second with its number' screen_has 'Claude Code #2  my proj:x.nvim'
+  check '... lining up the first with it' screen_has "Claude Code$(printf '%5s' '')my proj:x.nvim"
+  press '\x03'
+  wait_for no_picker
+fi
+second="$(t list-sessions -F '#S' | grep '^agent-claude-my_proj_x_nvim-.*-2$')"
+first="${second%-2}"
+t kill-session -t "=$first"
+press '\x02A'
+wait_for menu_up
+press 'n'
+check 'with the first gone, a new session takes its place' attached_to "$first"
+check '... with no number' screen_has "$L Claude Code $R"
+press '\x02a'
+wait_for no_popup
+t kill-session -t "=$second"
+
 echo "Pi built-in agent"
 t set-option -gu @agent_popup_agents
 t set-option -g @agent_popup_pi_cmd cat
@@ -563,6 +603,20 @@ check 'picking it again reopens it without asking for a model' popup_on 'copilot
 check '... in the same session' sessions_named 'copilot+local' 1
 press '\x02a'
 wait_for no_popup
+press '\x02A'
+wait_for screen_has 'Agents'
+press '6'
+wait_for screen_has "$L Local model $R"
+press 'j'
+press 'j'
+press 'n'
+check 'n on it asks for a model' screen_has "$L Copilot · model $R"
+press '1'
+check '... and starts another session' sessions_named 'copilot+local' 2
+check '... titled with the model and its number' screen_has "$L Copilot · gpt-oss:20b #2 $R"
+press '\x02a'
+wait_for no_popup
+t kill-session -t "=$(t list-sessions -F '#S' | grep '^agent-copilot+local-.*-2$')"
 press '\x02A'
 wait_for screen_has 'Agents'
 press '6'

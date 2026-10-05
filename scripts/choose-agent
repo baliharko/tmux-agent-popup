@@ -8,6 +8,10 @@
 # h and l, or the left and right arrows, go back and forth between the
 # menus; going back highlights the item you came from.
 #
+# Picking an agent running here reopens its session used last. n picks it
+# as new: another session of it, next to the ones running (for an agent on
+# a local model, once you've picked the model).
+#
 # Inside an agent popup it dismisses the popup instead, like the toggle key.
 #
 #   choose-agent <client> <pane>                  the agent menu
@@ -42,7 +46,7 @@ for name in "${options[@]}"; do
   cmds+=(\; display-message -p "#{$name}")
 done
 cmds+=(\; list-sessions -F "$AGENT_SESSIONS_FORMAT")
-running=' '
+running=' ' sessions=()
 {
   IFS= read -r in_agent
   IFS= read -r dir
@@ -51,11 +55,14 @@ running=' '
     IFS= read -r value
     keep_option "$name" "$value"
   done
-  # The agents running in this directory, e.g. " claude copilot+local ".
+  # The agents running in this directory, e.g. " claude copilot+local ",
+  # and their sessions, as agent_sessions gives them.
   while IFS= read -r line; do
     path="$line"
-    for _ in 1 2 3 4 5 6; do path="${path#*:}"; done
-    [ -z "${line%%:*}" ] || [ "$path" != "$dir" ] || running="$running${line%%:*} "
+    for _ in 1 2 3 4 5 6 7; do path="${path#*:}"; done
+    [ -n "${line%%:*}" ] && [ "$path" = "$dir" ] || continue
+    running="$running${line%%:*} "
+    sessions+=("$line")
   done
 } < <(tmux "${cmds[@]}")
 
@@ -105,7 +112,8 @@ say() { tmux display-message -c "$client" "agent-popup: ${1//\#/##}"; }
 # pick <title> <start id> [<id> <label>]...
 # A menu of the labels, numbered, starting on the item with <start id>. An
 # item with the id - and no label is a separator. Sets PICKED to the id of
-# the item picked, "back", or nothing if the menu was closed.
+# the item picked, "back", or nothing if the menu was closed, and NEW to 1
+# if it was picked with n, for a new session.
 pick() {
   local title="$1" at="$2" ids=() items=() start=0 n=0 keys=0 key
   shift 2
@@ -123,10 +131,25 @@ pick() {
     shift 2
   done
   show_menu "$client" "$title" "$start" "${items[@]}"
+  NEW=''
   case "$MENU_CHOICE" in
   '' | back) PICKED="$MENU_CHOICE" ;;
+  new\ *) NEW=1 PICKED="${ids[${MENU_CHOICE#new }]}" ;;
   *) PICKED="${ids[MENU_CHOICE]}" ;;
   esac
+}
+
+# last_session <agent>: its session here used last.
+last_session() {
+  local line last=-1 when name
+  for line in ${sessions[@]+"${sessions[@]}"}; do
+    [ "${line%%:*}" = "$1" ] || continue
+    name="${line#*:}"
+    when="${name#*:}"
+    when="${when%%:*}"
+    [ "$when" -gt "$last" ] || continue
+    last="$when" SESSION="${name%%:*}"
+  done
 }
 
 # marked <running name> <label>: sets LABEL to the label, marked if that's
@@ -164,7 +187,8 @@ local_menu() {
     marked "$agent+local" "$LABEL"
     case "$running" in
     *" $agent+local "*)
-      model="$(tmux display-message -p -t "=$(session_name "$agent+local" "$dir"):" '#{@agent_popup_model}')"
+      last_session "$agent+local"
+      model="$(tmux display-message -p -t "=$SESSION:" '#{@agent_popup_model}')"
       LABEL="$LABEL  "$'\033[2m'"$model"$'\033[0m'
       ;;
     esac
@@ -252,7 +276,7 @@ while :; do
       exit 0
       ;;
     local) menu=local at='' ;;
-    *) open_agent "$PICKED" "$client" "$pane" ;;
+    *) open_agent ${NEW:+--new} "$PICKED" "$client" "$pane" ;;
     esac
     ;;
   local)
@@ -262,7 +286,8 @@ while :; do
     '') exit 0 ;;
     back) menu=agents at=local ;;
     *)
-      case "$running" in
+      # Reopened if it runs here, unless picked with n.
+      case "${NEW:-$running}" in
       *" $PICKED+local "*) open_agent "$PICKED+local" "$client" "$pane" ;;
       esac
       menu=models agent="$PICKED" at=''

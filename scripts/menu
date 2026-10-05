@@ -6,6 +6,7 @@
 #
 #   j k, down up, tab       move
 #   l, right, enter         pick the highlighted item
+#   n                       pick it as new: another session of an agent
 #   h, left                 back to the menu before
 #   an item's key           pick that item
 #   g G, home end           the first / last item
@@ -16,8 +17,8 @@
 # $AGENT_POPUP_MENU is a file with a row per line: the item's key, \037,
 # and the row as drawn, which can have colours. A key of - is a row that
 # can't be picked, a separator. What was picked goes to
-# $AGENT_POPUP_MENU.choice: the row's number, from 0, or "back". Nothing if
-# the menu was closed. The highlight starts on row $AGENT_POPUP_MENU_START,
+# $AGENT_POPUP_MENU.choice: the row's number, from 0, "new <number>" for n,
+# or "back". Nothing if the menu was closed. The highlight starts on row $AGENT_POPUP_MENU_START,
 # in $AGENT_POPUP_MENU_SELECTED (SGR parameters). The row it's on is kept
 # in $AGENT_POPUP_MENU.at, for a menu opened again when the terminal is
 # resized.
@@ -135,6 +136,7 @@ while :; do
   j | $'\t') move 1 ;;
   k) move -1 ;;
   l | $'\r' | $'\n') finish "$sel" ;;
+  n) finish "new $sel" ;;
   h) finish back ;;
   g) sel=$((n - 1)) && move 1 ;;
   G) sel=0 && move -1 ;;
