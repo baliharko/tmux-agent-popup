@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The picker labels where an agent you started yourself runs as
+  `pane 0:2.0` instead of a bare `0:2.0`, which looked like a version
+  number.
+
 - Several sessions of one agent in a directory: highlight the agent in the
   `prefix A` menu and press `n` to start another next to the one running,
   e.g. two Claude Codes on separate tasks. Sessions after the first are

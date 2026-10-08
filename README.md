@@ -107,9 +107,9 @@ as its popup does, colours included, and as wide. On fzf versions without a
 timer (before `every()` was added), both update once a second.
 
 ```
-● waiting  Claude Code  api                  open       ~/dev/api
-● working  Codex        web                  0:2.0      ~/dev/web
-● idle     Copilot      dotfiles             0:0.0      ~/dotfiles
+● waiting  Claude Code  api                  open         ~/dev/api
+● working  Codex        web                  pane 0:2.0   ~/dev/web
+● idle     Copilot      dotfiles             pane 0:0.0   ~/dotfiles
 ```
 
 - **waiting**: the agent needs you. Claude Code reports this itself when it
@@ -129,7 +129,7 @@ The plugin's sessions come first, most recently opened at the top, then
 agents in ordinary panes. The order doesn't change as agents start
 and stop working, so rows don't move under the cursor.
 
-`open` marks a session shown in a popup right now. `0:2.0` is the pane
+`open` marks a session shown in a popup right now. `pane 0:2.0` is the pane
 (session:window.pane) where an agent you started yourself is running. The
 picker finds those by process name: a process named like one of the agents in
 `@agent_popup_agents`, or a node, bun, deno or python script of that name.

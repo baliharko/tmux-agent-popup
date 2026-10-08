@@ -228,7 +228,7 @@ gather_rows() {
     record 0 "$last" session "$target" '' "$agent" "$number" "$tty" "$bell" "$where" "$path"
   done
   loose_agents | while IFS=: read -r agent target pid session place tty bell path; do
-    record 1 0 pane "$target" "$pid" "$agent" '' "$tty" "$bell" "$session:$place" "$path"
+    record 1 0 pane "$target" "$pid" "$agent" '' "$tty" "$bell" "pane $session:$place" "$path"
   done
 }
 
@@ -287,7 +287,7 @@ list_rows() {
       label="$label${number:+ #$number}"
       # The note ("open", or where a hand-started agent runs) goes before
       # the path, which fzf cuts off first when the line is too long.
-      printf '%s\t%s\t%s\t%s\t%s\t%s  %s%*s \033[1m%-20s\033[0m %-10s \033[2m%s\033[0m\n' \
+      printf '%s\t%s\t%s\t%s\t%s\t%s  %s%*s \033[1m%-20s\033[0m %-12s \033[2m%s\033[0m\n' \
         "$order" "$recency" "$kind" "$target" "$pid" \
         "$status" "$label" $((width - ${#name})) '' "${dir##*/}" "$note" "$place"
     done | sort -t $'\t' -k1,1n -k2,2nr | cut -f3-
