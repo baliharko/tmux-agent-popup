@@ -60,7 +60,7 @@ running=' ' sessions=()
   while IFS= read -r line; do
     path="$line"
     for _ in 1 2 3 4 5 6 7; do path="${path#*:}"; done
-    [ -n "${line%%:*}" ] && [ "$path" = "$dir" ] || continue
+    if [ -z "${line%%:*}" ] || [ "$path" != "$dir" ]; then continue; fi
     running="$running${line%%:*} "
     sessions+=("$line")
   done

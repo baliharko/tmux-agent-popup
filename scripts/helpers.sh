@@ -503,6 +503,7 @@ session_name() {
 # A name for a new session of <agent> in <dir>: session_name's, or while
 # that's taken, the same with -2, -3 and so on after it. Sets SESSION to it,
 # and NUMBER to its number, or nothing for session_name's.
+# shellcheck disable=SC2034 # NUMBER is for the caller
 free_session() {
   local base taken n=1
   base="$(session_name "$1" "$2")"

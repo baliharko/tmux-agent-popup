@@ -187,6 +187,14 @@ open_picker() {
   wait_up_to 2 screen_has 'ctrl-x: kill' || press '\x02u'
   wait_for screen_has '● '
 }
+# open_menu: prefix A, and wait for the agent menu, pressing it again if the
+# popup that just closed swallowed it (as open_picker does). A key typed
+# after a menu that never came up would go to the shell instead.
+open_menu() {
+  press '\x02A'
+  wait_up_to 2 menu_up || press '\x02A'
+  wait_for menu_up
+}
 snap() {
   rm -f "$TMP/snap"
   printf '#snap %s\n' "$TMP/snap" >&3
@@ -330,7 +338,14 @@ tmux_at_least() {
 }
 windows_in_main() { [ "$(t list-windows -t main | wc -l | tr -d ' ')" = "$1" ]; }
 windows_in_session() { [ "$(t list-windows -t "=$(session_for "$1"):" | wc -l | tr -d ' ')" = "$2" ]; }
-process_gone() { ! kill -0 "$1" 2>/dev/null; }
+# process_gone <pid>: it exited. A zombie has too, though its parent may not
+# have collected it yet (tmux, for a pane's own process).
+process_gone() {
+  case "$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')" in
+  '' | Z*) return 0 ;;
+  *) return 1 ;;
+  esac
+}
 window_is() { [ "$(t display-message -p -t main: '#{window_index}')" = "$1" ]; }
 wrapped_keys() { [ "$(t list-keys -T prefix | grep -c 'scripts/passthrough')" -eq "$1" ]; }
 # wraps_with_pane <key>: its wrapper passes the pane. (list-keys with a key
@@ -462,8 +477,7 @@ press '\x02A'
 check 'prefix A inside the popup dismisses it' no_popup
 
 echo "several sessions of one agent"
-press '\x02A'
-wait_for menu_up
+open_menu
 press 'n' # on the first item: Claude Code, which runs here
 check 'n in the menu starts another session of the highlighted agent' sessions_named claude 2
 check '... in a popup titled with its number' screen_has "$L Claude Code #2 $R"
@@ -475,8 +489,7 @@ press '\x02a'
 check 'prefix a reopens the session used last' screen_has "$L Claude Code #2 $R"
 press '\x02a'
 wait_for no_popup
-press '\x02A'
-wait_for menu_up
+open_menu
 press '1'
 check '... and so does picking the agent in the menu' screen_has "$L Claude Code #2 $R"
 check '... starting no other' sessions_named claude 2
@@ -492,8 +505,7 @@ fi
 second="$(t list-sessions -F '#S' | grep '^agent-claude-my_proj_x_nvim-.*-2$')"
 first="${second%-2}"
 t kill-session -t "=$first"
-press '\x02A'
-wait_for menu_up
+open_menu
 press 'n'
 check 'with the first gone, a new session takes its place' attached_to "$first"
 check '... with no number' screen_has "$L Claude Code $R"
@@ -670,8 +682,7 @@ check 'h in the first menu closes it' screen_lacks "$L Agents $R"
 check '... starting nothing' no_popup
 # Typed as quickly as someone who knows the way: keys typed between two
 # menus, before the next is up, would go to the pane underneath.
-press '\x02A'
-sleep 0.3
+open_menu
 for key in 6 3 1; do
   press "$key"
   sleep 0.1
@@ -702,7 +713,8 @@ press '\x02('
 check 'prefix ( there still switches back, as normal' main_attached
 
 echo "another directory"
-t send-keys -t main: "cd '$OTHER'" Enter
+# C-u first, so a key that went astray earlier can't spoil the command.
+t send-keys -t main: C-u "cd '$OTHER'" Enter
 wait_for in_dir "$OTHER"
 press '\x02a'
 check 'prefix a in a new directory opens the menu' screen_has 'Agents'
@@ -1082,8 +1094,7 @@ resize 100 30
 wait_for frame_sized 90 27
 press '\x02a'
 wait_for no_popup
-press '\x02A'
-wait_for menu_up
+open_menu
 press 'g'
 press 'j' # Codex
 sleep 0.3
