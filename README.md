@@ -311,6 +311,31 @@ The same `_cmd` and `_label` options override the built-in agents.
 - `destroy-unattached on` destroys agent sessions as soon as they are
   created, so the plugin can't work with it.
 
+## Troubleshooting
+
+### Bright popup backgrounds after a terminal or tmux update
+
+tmux 3.8 introduced theme-based popup and menu colours. If it detects a
+light theme while your terminal uses a dark background, popups can appear
+too bright. The plugin's menu selection renderer also does not yet resolve
+tmux's new colour names such as `themeyellow`.
+
+Set explicit styles in your tmux config to use the terminal's default
+background and readable menu selection colours. This example matches
+Ghostty's Kanagawa Bones theme:
+
+```tmux
+set -g popup-style 'fg=default,bg=default'
+set -g popup-border-style 'fg=green,bg=default'
+set -g menu-style 'fg=default,bg=default'
+set -g menu-selected-style 'fg=#ddd8bb,bg=#49473e'
+```
+
+Choose selection colours to suit your theme, reload your tmux config, and
+close and reopen the popup. These settings apply to tmux's other popups and
+menus too. Keep `@agent_popup_transparent on` if you want agent panes to
+retain your terminal's transparency.
+
 ## Development
 
 The end-to-end tests start a private tmux server, attach a real client on a
