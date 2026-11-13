@@ -56,6 +56,52 @@ if [ "${1:-}" = --preview ]; then
   exit 0
 fi
 
+# away: whether the terminal the picker is on is in the background, so
+# nobody can see the picker. Only with AGENT_POPUP_AWAY set, which the picker
+# does when tmux can tell (focus-events on); otherwise never.
+away() {
+  [ -n "${AGENT_POPUP_AWAY:-}" ] || return 1
+  case "$(tmux list-clients -f "#{==:#{client_name},$AGENT_POPUP_CLIENT}" -F '#{client_flags}')" in
+  *focused*) return 1 ;;
+  esac
+}
+
+# The picker's live updates start a few dozen programs a second, which an
+# endpoint scanner (Defender, say) inspects one by one. So they stop while
+# nobody can see the picker, and it closes after AGENT_POPUP_TIMEOUT seconds
+# of that (0: never). These two come before the helpers too, as they run
+# every second.
+#
+# --tick: what fzf does each second (its every(1) binding below). In view:
+# keep the preview's ten-a-second redraw on and reload the list. Away: turn
+# the redraw off and skip the reload, or close the picker. AGENT_POPUP_AWAY
+# is a file counting the seconds away, a tick at a time.
+if [ "${1:-}" = --tick ]; then
+  if away; then
+    n=0
+    [ -f "$AGENT_POPUP_AWAY" ] && read -r n <"$AGENT_POPUP_AWAY"
+    n=$((n + 1))
+    printf '%s\n' "$n" >"$AGENT_POPUP_AWAY"
+    timeout="${AGENT_POPUP_TIMEOUT:-0}"
+    if [ "$timeout" -gt 0 ] && [ "$n" -ge "$timeout" ]; then
+      printf abort
+    else
+      printf 'unbind(every(0.1))'
+    fi
+    exit 0
+  fi
+  [ ! -f "${AGENT_POPUP_AWAY:-}" ] || rm -f "$AGENT_POPUP_AWAY"
+  # shellcheck disable=SC2016 # expanded by fzf's shell
+  printf '%s' 'rebind(every(0.1))+reload-sync("$AGENT_POPUP_PICKER" --list)'
+  exit 0
+fi
+# --wait: on an fzf without a timer, where each reload starts the next, wait
+# while away. That picker can't close itself from a reload.
+if [ "${1:-}" = --wait ]; then
+  while away; do sleep 1; done
+  exit 0
+fi
+
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
 . "$DIR/helpers.sh"
@@ -232,15 +278,28 @@ gather_rows() {
   done
 }
 
+# CLAUDE_TTL: how many seconds the picker reuses Claude Code's status for,
+# rather than starting Claude Code (a large program) for it every second.
+CLAUDE_TTL=3
+
 # load_records [quick]
 # Sets RECORDS to gather_rows' records and CLAUDE_STATES to Claude Code's own
 # status, for agent_state. quick leaves out Claude Code's status, the slowest
 # part. Sets globals rather than printing, since agent_state reads
-# CLAUDE_STATES in this same shell.
+# CLAUDE_STATES in this same shell. In the picker (AGENT_POPUP_CACHE set),
+# the status is kept for CLAUDE_TTL seconds, in a file whose first line is
+# when it was asked for.
 load_records() {
-  local states claude
+  local states claude cache='' now asked
   CLAUDE_STATES=''
+  if [ -n "${AGENT_POPUP_CACHE:-}" ] && [ -d "$AGENT_POPUP_CACHE" ]; then
+    cache="$AGENT_POPUP_CACHE/claude"
+    now="${EPOCHSECONDS:-$(date +%s)}" # bash 3.2 has no EPOCHSECONDS
+  fi
   if [ "${1:-}" = quick ]; then
+    RECORDS="$(gather_rows)"
+  elif [ -n "$cache" ] && { IFS= read -r asked && IFS= read -r CLAUDE_STATES; } 2>/dev/null <"$cache" &&
+    [ "$((now - asked))" -lt "$CLAUDE_TTL" ]; then
     RECORDS="$(gather_rows)"
   else
     # `claude agents` takes about as long as everything else put together,
@@ -252,6 +311,10 @@ load_records() {
     wait "$claude"
     CLAUDE_STATES="$(cat "$states")"
     rm -f "$states"
+    if [ -n "$cache" ]; then
+      # Whole or not at all, for a reload that reads it meanwhile (ctrl-x).
+      printf '%s\n%s\n' "$now" "$CLAUDE_STATES" >"$cache.$$" && mv -f "$cache.$$" "$cache"
+    fi
   fi
 }
 
@@ -410,17 +473,17 @@ if fzf_at_least 0 36; then
   opts+=(--no-scrollbar)
 fi
 # Live: redraw the preview ten times a second so it follows the agent as it
-# types, and reload the list (statuses) every second. Without fzf's timer,
-# each finished load starts the next reload after a pause instead, which
-# also redraws the preview; fzf then shows its loading spinner through the
-# pause.
+# types, and reload the list (statuses) every second, both only while the
+# terminal is in view (--tick). Without fzf's timer, each finished load
+# starts the next reload after a pause instead, which also redraws the
+# preview; fzf then shows its loading spinner through the pause.
 # shellcheck disable=SC2016 # expanded by fzf's shell
 if fzf_has_timer; then
   opts+=(--bind 'every(0.1):refresh-preview'
-    --bind 'every(1):reload-sync("$AGENT_POPUP_PICKER" --list)'
+    --bind 'every(1):transform:"$AGENT_POPUP_PICKER" --tick'
     --bind 'load:unbind(load)+reload-sync("$AGENT_POPUP_PICKER" --list)')
 else
-  opts+=(--bind 'load:reload-sync(sleep 1; "$AGENT_POPUP_PICKER" --list)+refresh-preview')
+  opts+=(--bind 'load:reload-sync(sleep 1; "$AGENT_POPUP_PICKER" --wait; "$AGENT_POPUP_PICKER" --list)+refresh-preview')
 fi
 # fzf's gutter, the column left of the rows, blank instead of a dark bar,
 # which a see-through terminal would draw solid; and the current row
@@ -454,8 +517,27 @@ elif fzf_at_least 0 38; then
 else
   opts+=(--header 'enter: open · ctrl-x: kill')
 fi
+# A directory of the picker's own, for the seconds away (--tick) and Claude
+# Code's status (load_records). Pausing needs tmux to know when the
+# terminal is in the background, which it does with focus-events on.
+AGENT_POPUP_CACHE="$(mktemp -d "${TMPDIR:-/tmp}/agent-popup.XXXXXX")"
+AGENT_POPUP_TIMEOUT="$(get_option @agent_popup_picker_timeout 1800)"
+case "$AGENT_POPUP_TIMEOUT" in
+'' | *[!0-9]*) AGENT_POPUP_TIMEOUT=1800 ;;
+esac
+AGENT_POPUP_AWAY=''
+if [ -n "${AGENT_POPUP_CLIENT:-}" ] && [ "$(tmux show-options -sv focus-events)" = on ]; then
+  AGENT_POPUP_AWAY="$AGENT_POPUP_CACHE/away"
+fi
+export AGENT_POPUP_CACHE AGENT_POPUP_TIMEOUT AGENT_POPUP_AWAY
+# tmux hangs up on the picker when it closes the popup from outside.
+trap 'rm -rf "$AGENT_POPUP_CACHE"' EXIT
+trap 'exit 129' HUP
+trap 'exit 143' TERM
+
 # n (ctrl-n) ends fzf with "new" rather than a row: rows have tabs.
 selected="$(list_rows quick | fzf "${opts[@]}")"
+rm -rf "$AGENT_POPUP_CACHE" # the exec below skips the EXIT trap
 [ -n "$selected" ] || exit 0
 
 kind="${selected%%$'\t'*}"

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- The picker (`prefix u`) rests while your terminal is in the background:
+  with tmux's `focus-events on`, its preview and list stop updating until
+  you come back, and after 30 minutes of that it closes
+  (`@agent_popup_picker_timeout`, in seconds; `0` keeps it open). A picker
+  left open in a background window used to start a few dozen programs a
+  second for as long as it was open, which an endpoint scanner such as
+  Microsoft Defender inspects one by one, slowing down the whole machine.
+  The picker also asks Claude Code for its status every 3 seconds instead
+  of every second, as that starts Claude Code itself.
+
 - The picker labels where an agent you started yourself runs as
   `pane 0:2.0` instead of a bare `0:2.0`, which looked like a version
   number.

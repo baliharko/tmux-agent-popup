@@ -106,6 +106,15 @@ list (and who's working) updates every second. The preview shows the agent
 as its popup does, colours included, and as wide. On fzf versions without a
 timer (before `every()` was added), both update once a second.
 
+With `focus-events on` in your tmux config, which lets tmux know when your
+terminal is in the background, the picker stops updating while it is, and
+picks up again within a second of your coming back. Its updates start a
+few dozen small programs a second, which adds up, more so with an endpoint
+scanner (Microsoft Defender, CrowdStrike) inspecting every one. After
+`@agent_popup_picker_timeout` seconds in the background (30 minutes by
+default, `0` for never) it closes, so a picker left open doesn't sit there
+for hours. On fzf without a timer it only stops updating.
+
 ```
 ● waiting  Claude Code  api                  open         ~/dev/api
 ● working  Codex        web                  pane 0:2.0   ~/dev/web
@@ -215,6 +224,7 @@ agent's output.
 set -g @agent_popup_key        'a'        # toggle, after prefix
 set -g @agent_popup_menu_key   'A'        # agent menu, after prefix
 set -g @agent_popup_picker_key 'u'        # session picker, after prefix
+set -g @agent_popup_picker_timeout '1800' # close the picker after this many seconds in the background; 0: never
 set -g @agent_popup_root_key   ''         # toggle without prefix, e.g. 'M-a'
 set -g @agent_popup_width      '90%'
 set -g @agent_popup_height     '90%'

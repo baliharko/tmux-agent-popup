@@ -155,12 +155,12 @@ wait_up_to() {
 wait_for() { wait_up_to 5 "$@"; }
 # check <description> <command...>
 # A client that exits was detached, which ends the run: nothing after it can
-# pass.
+# pass. WAIT=<seconds> check ... waits longer than wait_for's 5 seconds.
 check() {
   local desc="$1"
   shift
   local ok=0
-  if wait_for "$@"; then pass "$desc"; else fail "$desc"; ok=1; fi
+  if wait_up_to "${WAIT:-5}" "$@"; then pass "$desc"; else fail "$desc"; ok=1; fi
   if ! kill -0 "$CPID" 2>/dev/null; then
     echo "the test client exited (detached?); stopping"
     exit 1
@@ -254,6 +254,23 @@ preview_keeps_up() {
     [ "${after:-0}" -gt "${before:-0}" ] || return 1
   done
 }
+# preview_stopped: the preview shows livebot's counter, and it doesn't move
+# for a second, though livebot counts on.
+preview_stopped() {
+  local before after
+  before="$(max_tick)"
+  sleep 1
+  after="$(max_tick)"
+  [ -n "$before" ] && [ "$before" = "$after" ]
+}
+# focus <in|out>: the terminal comes to the front or goes to the
+# background, as a terminal reports it to tmux with focus-events on.
+focus() {
+  if [ "$1" = in ]; then press '\x1b[I'; else press '\x1b[O'; fi
+}
+# focused / unfocused: whether tmux sees the terminal as in the front.
+focused() { t list-clients -F '#{client_flags}' | head -n 1 | grep -q focused; }
+unfocused() { ! focused; }
 # fzf_at_least <major> <minor>, as in pick-session.
 fzf_at_least() {
   local v
@@ -759,10 +776,11 @@ else
   if command -v jq >/dev/null 2>&1; then
     check 'Claude Code saying it waits for you is marked waiting' \
       screen_has '● waiting  Claude Code  other'
+    # The picker asks Claude Code again only every 3 seconds.
     claude_says "$other_session" busy
-    check '... working when it says it is busy' screen_has '● working  Claude Code  other'
+    WAIT=10 check '... working when it says it is busy' screen_has '● working  Claude Code  other'
     claude_says "$other_session" idle
-    check '... and idle when it says so' screen_has '● idle     Claude Code  other'
+    WAIT=10 check '... and idle when it says so' screen_has '● idle     Claude Code  other'
   else
     echo "  skipped: Claude Code's own status needs jq"
   fi
@@ -911,6 +929,42 @@ EOF
   fi
   press '\x1b'
   wait_for no_picker
+
+  if fzf_has_timer; then
+    echo "terminal in the background"
+    t set-option -s focus-events on
+    t set-option -g @agent_popup_picker_timeout 0
+    focus in
+    wait_for focused
+    open_picker
+    check 'the preview is live while the terminal is in front' preview_keeps_up
+    focus out
+    check 'tmux sees the terminal go to the background' unfocused
+    check '... and the preview stops' preview_stopped
+    check '... though the picker stays open with a timeout of 0' screen_has 'ctrl-x: kill'
+    focus in
+    check '... and goes on when the terminal comes back' preview_keeps_up
+    press '\x1b'
+    wait_for no_picker
+    t set-option -g @agent_popup_picker_timeout 2
+    open_picker
+    focus out
+    check 'the picker closes after @agent_popup_picker_timeout seconds in the background' no_picker
+    focus in
+    wait_for focused
+    # Without focus-events tmux can't tell, so the picker never pauses, even
+    # if the terminal says it went to the background.
+    t set-option -s focus-events off
+    open_picker
+    focus out
+    settle
+    check 'with focus-events off, the preview stays live' preview_keeps_up
+    check '... and the picker open' screen_has 'ctrl-x: kill'
+    focus in
+    t set-option -gu @agent_popup_picker_timeout
+    press '\x1b'
+    wait_for no_picker
+  fi
 
   if fzf_at_least 0 46; then
     echo "picker keys"
