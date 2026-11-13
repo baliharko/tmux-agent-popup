@@ -12,6 +12,12 @@
   The picker also asks Claude Code for its status every 3 seconds instead
   of every second, as that starts Claude Code itself.
 
+- The agent menus' highlight shows again on tmux 3.8, whose default
+  `menu-selected-style` uses its new theme colours (`themeyellow`,
+  `themeblack`); the highlight came out in the terminal's default colours.
+  Colours by X11 name (`darkgoldenrod`) work in `menu-selected-style` now
+  too. tmux turns both into escape sequences, in one call per menu.
+
 - The picker labels where an agent you started yourself runs as
   `pane 0:2.0` instead of a bare `0:2.0`, which looked like a version
   number.

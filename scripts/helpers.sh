@@ -320,11 +320,17 @@ show_popup() {
 
 # colour_sgr <30|40> <colour>
 # Sets SGR to a tmux colour as SGR parameters, for the foreground (30) or
-# background (40): by name, number (colour0 to colour255) or #rrggbb.
-# Anything else is the terminal's default.
+# background (40): by name, number (colour0 to colour255) or #rrggbb. Any
+# other name is left to tmux (see style_sgr): fails, setting ASK to the
+# format that asks for it, and SGR to the terminal's default, for a tmux
+# that can't say.
 colour_sgr() {
-  local base="$1" colour="$2" name i=0
+  local base="$1" colour="$2" name i=0 which=f
   case "$colour" in
+  '' | default | terminal)
+    SGR=$(($1 + 9))
+    return 0
+    ;;
   bright*)
     base=$((base + 60))
     colour="${colour#bright}"
@@ -333,7 +339,7 @@ colour_sgr() {
   for name in black red green yellow blue magenta cyan white; do
     if [ "$colour" = "$name" ]; then
       SGR=$((base + i))
-      return
+      return 0
     fi
     i=$((i + 1))
   done
@@ -342,20 +348,35 @@ colour_sgr() {
   '#'[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])
     SGR="$(($1 + 8));2;$((16#${colour:1:2}));$((16#${colour:3:2}));$((16#${colour:5:2}))"
     ;;
-  *) SGR=$(($1 + 9)) ;;
+  *)
+    [ "$1" = 30 ] || which=b
+    SGR=$(($1 + 9)) ASK="#{c/$which:$colour}"
+    return 1
+    ;;
   esac
 }
 
 # style_sgr <style>
 # A tmux style as SGR parameters, e.g. "bg=yellow,fg=black" as "43;30": its
 # colours and attributes. Reverse video for a style with neither, so that
-# something shows.
+# something shows. Colours by any other name tmux knows, X11's (like
+# darkgoldenrod) and from tmux 3.8 its theme colours (themeyellow, which
+# its default menu styles use), come from tmux's #{c/f:...} and
+# #{c/b:...}, the escape sequence for one, all in one call.
 style_sgr() {
-  local part sgr='' IFS=', ' SGR
+  local part sgr='' IFS=', ' SGR ASK asks='' defaults=() got=() i seq
   for part in $1; do
     case "$part" in
-    fg=*) colour_sgr 30 "${part#fg=}" && sgr="$sgr;$SGR" ;;
-    bg=*) colour_sgr 40 "${part#bg=}" && sgr="$sgr;$SGR" ;;
+    fg=* | bg=*)
+      if [ "${part%%=*}" = fg ]; then i=30; else i=40; fi
+      if colour_sgr "$i" "${part#*=}"; then
+        sgr="$sgr;$SGR"
+      else
+        sgr="$sgr;@${#defaults[@]}@"
+        defaults+=("$SGR")
+        asks="$asks|$ASK"
+      fi
+      ;;
     bold | bright) sgr="$sgr;1" ;;
     dim) sgr="$sgr;2" ;;
     italics) sgr="$sgr;3" ;;
@@ -366,6 +387,18 @@ style_sgr() {
     strikethrough) sgr="$sgr;9" ;;
     esac
   done
+  if [ "${#defaults[@]}" -gt 0 ]; then
+    seq="$(tmux display-message -p "${asks#|}" 2>/dev/null)"
+    IFS='|' read -r -a got <<<"$seq"
+    for i in "${!defaults[@]}"; do
+      seq="${got[i]:-}"
+      case "$seq" in
+      $'\033['*m) seq="${seq#$'\033['}" seq="${seq%m}" ;;
+      *) seq="${defaults[i]}" ;; # tmux before 3.8 says something else
+      esac
+      sgr="${sgr/@$i@/$seq}"
+    done
+  fi
   sgr="${sgr#;}"
   printf '%s' "${sgr:-7}"
 }
