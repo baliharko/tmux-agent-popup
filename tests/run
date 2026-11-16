@@ -819,6 +819,25 @@ else
   check "the preview keeps an agent's colours, backgrounds too" preview_matches "$proj_session" '' '48;2;11;14;20.*painted'
   check '... and a filled row to its end' preview_matches "$proj_session" '' '48;2;49;48;54m {50}'
   check '... and a colour from a row above the ones that fit' preview_matches "$proj_session" 1 '48;2;49;48;54m.*carried'
+  # Count actual preview captures while fzf reloads the same idle rows.
+  # This catches accidental worker restarts on every list refresh, which a
+  # standalone preview test cannot see. The wrapper exists only here.
+  real_tmux="$(command -v tmux)"
+  {
+    printf '#!/bin/bash\n'
+    printf 'log=%q\n' "$TMP/preview-captures"
+    # shellcheck disable=SC2016 # expanded by the wrapper
+    printf '%s\n' 'if [ "$1" = capture-pane ] && [ "$2" = -eNpt ]; then echo capture >>"$log"; fi'
+    printf 'exec %q "$@"\n' "$real_tmux"
+  } >"$TMP/bin/tmux"
+  chmod +x "$TMP/bin/tmux"
+  sleep 2 # let the screen and any first full reload settle
+  : >"$TMP/preview-captures"
+  sleep 3
+  captures="$(wc -l <"$TMP/preview-captures" | tr -d ' ')"
+  rm -f "$TMP/bin/tmux"
+  check 'an unchanged preview captures at most five times in three seconds' [ "$captures" -le 5 ]
+  check '... still checking for new output' [ "$captures" -ge 1 ]
   search "'proj:x.nvim" # exact match; fuzzy would also hit the long temp paths
   sleep 0.3
   press '\r'

@@ -22,8 +22,19 @@
 # the pane under it, whose directory a new agent is for.
 set -u
 
-# The preview is redrawn ten times a second, so it's handled first, without
-# loading the helpers. It shows the agent's screen as the popup does, colours
+# away: whether the terminal the picker is on is in the background, so
+# nobody can see the picker. Only with AGENT_POPUP_AWAY set, which the picker
+# does when tmux can tell (focus-events on); otherwise never.
+away() {
+  [ -n "${AGENT_POPUP_AWAY:-}" ] || return 1
+  case "$(tmux list-clients -f "#{==:#{client_name},$AGENT_POPUP_CLIENT}" -F '#{client_flags}')" in
+  *focused*) return 1 ;;
+  esac
+}
+
+# Preview handling comes before loading the helpers. A live preview keeps
+# one worker, sampling active output at 10 Hz and unchanged output at 1 Hz.
+# It shows the agent's screen as the popup does, colours
 # and all: -N keeps the spaces at the end of each row, which carry the
 # background of an agent that paints its own (OpenCode) or fills a box
 # (Copilot's text field). The blank lines below the agent's output are
@@ -31,9 +42,8 @@ set -u
 # end of it (the input box) without fzf scrolling, which would put its
 # position over the first row. tmux writes a colour only where it changes,
 # so the codes of the rows left out go in front of the first one printed.
-if [ "${1:-}" = --preview ]; then
-  if [ "$2" = session ]; then target="=$3:"; else target="$3"; fi
-  tmux capture-pane -eNpt "$target" | awk '
+render_preview() {
+  awk '
     {
       row[++n] = $0
       plain = $0
@@ -53,18 +63,42 @@ if [ "${1:-}" = --preview ]; then
       }
       for (i = first; i <= last; i++) printf "%s%s\n", (i == first ? codes : ""), row[i]
     }'
+}
+
+if [ "${1:-}" = --preview ] || [ "${1:-}" = --live-preview ]; then
+  if [ "$2" = session ]; then target="=$3:"; else target="$3"; fi
+  if [ "$1" = --preview ]; then
+    tmux capture-pane -eNpt "$target" | render_preview
+    exit 0
+  fi
+  previous='' first=1 unchanged=0 checked=-1 paused=''
+  parent="$PPID"
+  trap 'exit 0' HUP TERM INT
+  # Closing a tmux popup can terminate fzf before it reaps its preview.
+  # An unchanged screen produces no writes, so SIGPIPE alone cannot stop
+  # an orphan. Check both the parent and the picker's cache lifetime.
+  while [ "$parent" -gt 1 ] && kill -0 "$parent" 2>/dev/null; do
+    if [ -n "${AGENT_POPUP_CACHE:-}" ] && [ ! -d "$AGENT_POPUP_CACHE" ]; then exit 0; fi
+    # One focus check per second, including while the preview is idle.
+    if [ "$checked" -ne "$SECONDS" ]; then
+      checked="$SECONDS" paused=''
+      if away; then paused=1; fi
+    fi
+    if [ -n "$paused" ]; then sleep 1; continue; fi
+    screen="$(tmux capture-pane -eNpt "$target" 2>/dev/null)" || exit 0
+    if [ "$first" = 1 ] || [ "$screen" != "$previous" ]; then
+      frame="$(printf '%s\n' "$screen" | render_preview)"
+      # fzf supports streaming previews and CSI 2 J from version 0.24.
+      # Send a whole frame at once, so clearing doesn't flash a blank frame.
+      printf '\033[2J%s\n' "$frame" || exit 0
+      previous="$screen" first=0 unchanged=0
+    else
+      unchanged=$((unchanged + 1))
+    fi
+    if [ "$unchanged" -ge 5 ]; then sleep 1; else sleep 0.1; fi
+  done
   exit 0
 fi
-
-# away: whether the terminal the picker is on is in the background, so
-# nobody can see the picker. Only with AGENT_POPUP_AWAY set, which the picker
-# does when tmux can tell (focus-events on); otherwise never.
-away() {
-  [ -n "${AGENT_POPUP_AWAY:-}" ] || return 1
-  case "$(tmux list-clients -f "#{==:#{client_name},$AGENT_POPUP_CLIENT}" -F '#{client_flags}')" in
-  *focused*) return 1 ;;
-  esac
-}
 
 # The picker's live updates start a few dozen programs a second, which an
 # endpoint scanner (Defender, say) inspects one by one. So they stop while
@@ -73,8 +107,8 @@ away() {
 # every second.
 #
 # --tick: what fzf does each second (its every(1) binding below). In view:
-# keep the preview's ten-a-second redraw on and reload the list. Away: turn
-# the redraw off and skip the reload, or close the picker. AGENT_POPUP_AWAY
+# reload the list. Away: skip the reload, or close the picker. The preview
+# worker checks focus independently. AGENT_POPUP_AWAY
 # is a file counting the seconds away, a tick at a time.
 if [ "${1:-}" = --tick ]; then
   if away; then
@@ -86,13 +120,22 @@ if [ "${1:-}" = --tick ]; then
     if [ "$timeout" -gt 0 ] && [ "$n" -ge "$timeout" ]; then
       printf abort
     else
-      printf 'unbind(every(0.1))'
+      printf ignore
     fi
     exit 0
   fi
   [ ! -f "${AGENT_POPUP_AWAY:-}" ] || rm -f "$AGENT_POPUP_AWAY"
+  # Reloading identical rows restarts even a streaming preview in fzf.
+  # Compare first, so an idle selection keeps its worker and backoff.
+  rows="$("$AGENT_POPUP_PICKER" --list)"
+  previous=''
+  if [ -f "$AGENT_POPUP_CACHE/rows" ]; then
+    IFS= read -r -d '' previous <"$AGENT_POPUP_CACHE/rows" || :
+    if [ "$rows" = "$previous" ]; then printf ignore; exit 0; fi
+  fi
+  printf '%s' "$rows" >"$AGENT_POPUP_CACHE/rows"
   # shellcheck disable=SC2016 # expanded by fzf's shell
-  printf '%s' 'rebind(every(0.1))+reload-sync("$AGENT_POPUP_PICKER" --list)'
+  printf '%s' 'reload-sync(cat "$AGENT_POPUP_CACHE/rows")'
   exit 0
 fi
 # --wait: on an fzf without a timer, where each reload starts the next, wait
@@ -498,9 +541,18 @@ esac
 export SHELL=/bin/sh FZF_DEFAULT_OPTS='' AGENT_POPUP_PICKER="$DIR/pick-session"
 # shellcheck disable=SC2016 # expanded by fzf's shell
 opts=(--ansi --no-sort --reverse --cycle --delimiter $'\t' --with-nth 4
-  --preview '"$AGENT_POPUP_PICKER" --preview {1} {2}'
   --preview-window "up,70%,follow,border-bottom$(fzf_at_least 0 56 && echo ,noinfo)"
   --bind 'ctrl-x:execute-silent("$AGENT_POPUP_PICKER" --kill {1} {2} {3})+reload("$AGENT_POPUP_PICKER" --list)')
+# Without timers, each load triggers another reload and restarts the preview.
+# With timers, unchanged rows keep one streaming preview worker alive.
+HAS_TIMER=''
+if fzf_has_timer; then HAS_TIMER=1; fi
+# shellcheck disable=SC2016 # expanded by fzf's shell
+if [ -n "$HAS_TIMER" ]; then
+  opts+=(--preview 'exec "$AGENT_POPUP_PICKER" --live-preview {1} {2}')
+else
+  opts+=(--preview '"$AGENT_POPUP_PICKER" --preview {1} {2}')
+fi
 # The preview is as wide as the agent's popup, so it shows the agent's screen
 # uncut: its only border is the line below it, fzf's scrollbar (0.36 and
 # later) would take its last column, and from 0.56 fzf would put its
@@ -508,16 +560,15 @@ opts=(--ansi --no-sort --reverse --cycle --delimiter $'\t' --with-nth 4
 if fzf_at_least 0 36; then
   opts+=(--no-scrollbar)
 fi
-# Live: redraw the preview ten times a second so it follows the agent as it
-# types, and reload the list (statuses) every second, both only while the
-# terminal is in view (--tick). Without fzf's timer, each finished load
+# Reload the list (statuses) every second while the terminal is in view
+# (--tick). The preview worker follows output independently. Without fzf's
+# timer, each finished load
 # starts the next reload after a pause instead, which also redraws the
 # preview; fzf then shows its loading spinner through the pause.
 # shellcheck disable=SC2016 # expanded by fzf's shell
-if fzf_has_timer; then
-  opts+=(--bind 'every(0.1):refresh-preview'
-    --bind 'every(1):transform:"$AGENT_POPUP_PICKER" --tick'
-    --bind 'load:unbind(load)+reload-sync("$AGENT_POPUP_PICKER" --list)')
+if [ -n "$HAS_TIMER" ]; then
+  opts+=(--bind 'every(1):transform:"$AGENT_POPUP_PICKER" --tick'
+    --bind 'load:unbind(load)+transform:"$AGENT_POPUP_PICKER" --tick')
 else
   opts+=(--bind 'load:reload-sync(sleep 1; "$AGENT_POPUP_PICKER" --wait; "$AGENT_POPUP_PICKER" --list)+refresh-preview')
 fi
@@ -553,8 +604,8 @@ elif fzf_at_least 0 38; then
 else
   opts+=(--header 'enter: open · ctrl-x: kill')
 fi
-# A directory of the picker's own, for the seconds away (--tick) and Claude
-# Code's status (load_records). Pausing needs tmux to know when the
+# A directory of the picker's own, for the seconds away (--tick). Pausing
+# needs tmux to know when the
 # terminal is in the background, which it does with focus-events on.
 AGENT_POPUP_CACHE="$(mktemp -d "${TMPDIR:-/tmp}/agent-popup.XXXXXX")"
 AGENT_POPUP_TIMEOUT="$(get_option @agent_popup_picker_timeout 1800)"

@@ -101,11 +101,13 @@ model, if you like.
 plugin's own sessions, and agents you started yourself in an ordinary pane.
 Pressed inside an agent popup, it swaps the popup for the picker. With no
 agent running, it brings up the agent menu instead, as `prefix A` does.
-The preview redraws ten times a second, so you can watch an agent work; the
-list (and who's working) updates every second. Discovery of agents started
-in ordinary panes reuses a process snapshot for up to three seconds. The preview shows the agent
-as its popup does, colours included, and as wide. On fzf versions without a
-timer (before `every()` was added), both update once a second.
+The preview follows changing output up to ten times a second. When the screen
+stays unchanged, it checks once a second and redraws only on a change. A single
+preview worker stays running between frames. The list (and who's working)
+updates every second; discovery of agents started in ordinary panes reuses a
+process snapshot for up to three seconds. The preview shows the agent as its
+popup does, colours included, and as wide. On fzf versions without a
+timer, previews update once a second instead.
 
 With `focus-events on` in your tmux config, which lets tmux know when your
 terminal is in the background, the picker stops updating while it is, and
