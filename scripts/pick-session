@@ -206,10 +206,26 @@ loose_agents() {
 # reports them through `claude agents --json`: busy, waiting (a permission
 # prompt or a question) or idle. Empty without claude or jq.
 claude_states() {
-  local agents pids
+  local agents pids output worker watchdog
   command -v claude >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
-  agents="$(claude agents --json 2>/dev/null |
-    jq -r '.[] | select(.kind == "interactive") | "\(.pid) \(.status)"' 2>/dev/null)"
+  # Bound the optional CLI lookup. Keep stdout in a file so a descendant
+  # holding stdout open cannot keep the caller waiting after the timeout.
+  output="$(mktemp)"
+  claude agents --json >"$output" 2>/dev/null &
+  worker=$!
+  (
+    sleep 2 &
+    timer=$!
+    trap 'kill "$timer" 2>/dev/null; exit' TERM HUP
+    wait "$timer"
+    kill -KILL "$worker" 2>/dev/null || :
+  ) &
+  watchdog=$!
+  wait "$worker" 2>/dev/null || :
+  kill "$watchdog" 2>/dev/null || :
+  wait "$watchdog" 2>/dev/null || :
+  agents="$(jq -r '.[] | select(.kind == "interactive") | "\(.pid) \(.status)"' <"$output" 2>/dev/null)"
+  rm -f "$output"
   [ -n "$agents" ] || return 0
   pids="$(printf '%s\n' "$agents" | cut -d' ' -f1 | paste -sd, -)"
   {
@@ -258,7 +274,7 @@ record() {
   case "$6" in
   *+local) model="$(tmux display-message -p -t "=$4:" '#{@agent_popup_model}' 2>/dev/null)" ;;
   esac
-  printf '%s\037' "$1" "$2" "$3" "$4" "$5" "$(agent_option "${6%+local}" label)" "$model" \
+  printf '%s\037' "$1" "$2" "$3" "$4" "$5" "$6" "$(agent_option "${6%+local}" label)" "$model" \
     "$7" "$screen" "$8" "$9" "${10}"
   printf '%s\n' "${11}"
 }
@@ -278,43 +294,29 @@ gather_rows() {
   done
 }
 
-# CLAUDE_TTL: how many seconds the picker reuses Claude Code's status for,
-# rather than starting Claude Code (a large program) for it every second.
+# Claude's optional status is shared by pickers and status-line invocations
+# on this tmux server. Empty results are cached too, including timeouts.
 CLAUDE_TTL=3
 
-# load_records [quick]
-# Sets RECORDS to gather_rows' records and CLAUDE_STATES to Claude Code's own
-# status, for agent_state. quick leaves out Claude Code's status, the slowest
-# part. Sets globals rather than printing, since agent_state reads
-# CLAUDE_STATES in this same shell. In the picker (AGENT_POPUP_CACHE set),
-# the status is kept for CLAUDE_TTL seconds, in a file whose first line is
-# when it was asked for.
 load_records() {
-  local states claude cache='' now asked
+  local agent rest cached now asked needs_claude=''
   CLAUDE_STATES=''
-  if [ -n "${AGENT_POPUP_CACHE:-}" ] && [ -d "$AGENT_POPUP_CACHE" ]; then
-    cache="$AGENT_POPUP_CACHE/claude"
-    now="${EPOCHSECONDS:-$(date +%s)}" # bash 3.2 has no EPOCHSECONDS
-  fi
-  if [ "${1:-}" = quick ]; then
-    RECORDS="$(gather_rows)"
-  elif [ -n "$cache" ] && { IFS= read -r asked && IFS= read -r CLAUDE_STATES; } 2>/dev/null <"$cache" &&
-    [ "$((now - asked))" -lt "$CLAUDE_TTL" ]; then
-    RECORDS="$(gather_rows)"
+  RECORDS="$(gather_rows)"
+  [ "${1:-}" != quick ] && [ -n "$RECORDS" ] || return 0
+  while IFS=$'\037' read -r _ _ _ _ _ agent rest; do
+    case "$agent" in claude | claude+local) needs_claude=1; break ;; esac
+  done <<<"$RECORDS"
+  [ -n "$needs_claude" ] || return 0
+  now="${EPOCHSECONDS:-$(date +%s)}"
+  cached="$(tmux show-option -gqv @agent_popup_claude_states)"
+  asked="${cached%%:*}"
+  case "$asked" in '' | *[!0-9]*) asked=0 ;; esac
+  if [ "$now" -ge "$asked" ] && [ "$((now - asked))" -lt "$CLAUDE_TTL" ]; then
+    CLAUDE_STATES="${cached#*:}"
   else
-    # `claude agents` takes about as long as everything else put together,
-    # so it runs while the rest is gathered.
-    states="$(mktemp)"
-    claude_states >"$states" &
-    claude=$!
-    RECORDS="$(gather_rows)"
-    wait "$claude"
-    CLAUDE_STATES="$(cat "$states")"
-    rm -f "$states"
-    if [ -n "$cache" ]; then
-      # Whole or not at all, for a reload that reads it meanwhile (ctrl-x).
-      printf '%s\n%s\n' "$now" "$CLAUDE_STATES" >"$cache.$$" && mv -f "$cache.$$" "$cache"
-    fi
+    CLAUDE_STATES="$(claude_states)"
+    now="${EPOCHSECONDS:-$(date +%s)}"
+    tmux set-option -g @agent_popup_claude_states "$now:$CLAUDE_STATES"
   fi
 }
 
@@ -324,18 +326,18 @@ load_records() {
 # panes. quick (see load_records) is for the first list the picker shows;
 # the full one replaces it right after.
 list_rows() {
-  local order recency kind target pid label model number screen tty bell note dir status place
+  local order recency kind target pid agent label model number screen tty bell note dir status place
   local name width=12
   load_records "${1:-}"
   [ -n "$RECORDS" ] || return 0
   # The agent's name, with the model of one on a local model and the number
   # of a second session, in a column as wide as the longest.
-  while IFS=$'\037' read -r _ _ _ _ _ label model number _; do
+  while IFS=$'\037' read -r _ _ _ _ _ _ label model number _; do
     name="$label${model:+ $model}${number:+ #$number}"
     [ "${#name}" -lt "$width" ] || width=$((${#name} + 1))
   done <<<"$RECORDS"
   printf '%s\n' "$RECORDS" |
-    while IFS=$'\037' read -r order recency kind target pid label model number screen tty bell note dir; do
+    while IFS=$'\037' read -r order recency kind target pid agent label model number screen tty bell note dir; do
       case "$(agent_state "$screen" "$tty" "$bell")" in
       working) status=$'\033[33m●\033[0m working' ;;
       waiting) status=$'\033[1;31m●\033[0m \033[1mwaiting\033[0m' ;;
@@ -372,7 +374,7 @@ status_line() {
   local waiting=0 working=0 idle=0 line='' screen tty bell
   load_records
   [ -n "$RECORDS" ] || return 0
-  while IFS=$'\037' read -r _ _ _ _ _ _ _ _ screen tty bell _; do
+  while IFS=$'\037' read -r _ _ _ _ _ _ _ _ _ screen tty bell _; do
     case "$(agent_state "$screen" "$tty" "$bell")" in
     waiting) waiting=$((waiting + 1)) ;;
     working) working=$((working + 1)) ;;

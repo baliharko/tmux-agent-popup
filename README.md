@@ -203,8 +203,9 @@ set -g @dracula-custom-plugin-colors "dark_gray white"  # lights on a dark backg
 ```
 
 Use your plugin path. tmux reruns the script every `status-interval`
-seconds; it takes a fraction of a second, a little longer with Claude Code
-running, since it asks Claude Code for its status.
+seconds. Claude Code status is queried only when a Claude agent is present,
+shared with the picker for three seconds, and limited to a two-second wait.
+If the lookup times out, the screen and bell determine its state.
 
 ### Moving around with the popup open
 
