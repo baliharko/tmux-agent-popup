@@ -102,7 +102,8 @@ plugin's own sessions, and agents you started yourself in an ordinary pane.
 Pressed inside an agent popup, it swaps the popup for the picker. With no
 agent running, it brings up the agent menu instead, as `prefix A` does.
 The preview redraws ten times a second, so you can watch an agent work; the
-list (and who's working) updates every second. The preview shows the agent
+list (and who's working) updates every second. Discovery of agents started
+in ordinary panes reuses a process snapshot for up to three seconds. The preview shows the agent
 as its popup does, colours included, and as wide. On fzf versions without a
 timer (before `every()` was added), both update once a second.
 

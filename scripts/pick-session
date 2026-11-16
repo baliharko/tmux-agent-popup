@@ -140,29 +140,6 @@ fzf_has_timer() {
   [ "$?" -ne 2 ]
 }
 
-# screen_state <target>
-# What the bottom of the agent's screen says. waiting: it shows a prompt
-# that esc cancels, as agents do when they ask for approval or ask you a
-# question: "esc to cancel" (Copilot, Codex). This comes first: Copilot's
-# prompt replaces its "esc interrupt" line, but an agent may keep both.
-# working: it offers to interrupt the agent, as agents do only while they
-# work: "esc to interrupt" (Claude Code, Codex), "esc interrupt" (Copilot).
-# idle otherwise. Only the bottom lines count, so the conversation itself
-# can't trigger it. Screen activity won't do: Codex animates while it waits
-# for input.
-screen_state() {
-  tmux capture-pane -pt "$1" | awk '
-    NF { row[++n] = tolower($0) }
-    END {
-      state = "idle"
-      for (i = (n > 8 ? n - 7 : 1); i <= n; i++) {
-        if (row[i] ~ /esc (to )?cancel/) { state = "waiting"; break }
-        if (row[i] ~ /esc (to )?interrupt/) state = "working"
-      }
-      print state
-    }'
-}
-
 # loose_agents
 # Agents running in ordinary panes, outside the plugin's sessions. A pane
 # runs an agent when a process on its tty is named like one of the configured
@@ -170,9 +147,29 @@ screen_state() {
 # per pane, fields separated by ":" (see agent_sessions): agent, pane, pid,
 # session, window.pane, tty, bell (1 or 0), directory.
 loose_agents() {
+  local panes processes cached now asked ttys topology
+  panes="$(tmux list-panes -a -F 'T:#{pane_tty}:#{pane_id}:#{session_name}:#{window_index}.#{pane_index}:#{@agent_popup_agent}:#{pane_dead}:#{window_bell_flag}:#{pane_current_path}')"
+  # Query only live ordinary panes' ttys. No process scan when all panes
+  # belong to plugin sessions. Reuse the snapshot for three seconds, but
+  # invalidate it immediately when the pane topology changes.
+  ttys="$(printf '%s\n' "$panes" | awk -F: '$6 == "" && $7 != "1" { sub(/^\/dev\//, "", $2); printf "%s%s", sep, $2; sep="," }')"
+  [ -n "$ttys" ] || return 0
+  topology="${panes//$'\n'/|}"
+  now="${EPOCHSECONDS:-$(date +%s)}"
+  cached="$(tmux show-option -gqv @agent_popup_processes)"
+  asked="${cached%%$'\n'*}"
+  case "$asked" in '' | *[!0-9]*) asked=0 ;; esac
+  cached="${cached#*$'\n'}"
+  if [ "${1:-}" != fresh ] && [ "${cached%%$'\n'*}" = "$topology" ] &&
+    [ "$now" -ge "$asked" ] && [ "$((now - asked))" -lt 3 ]; then
+    processes="${cached#*$'\n'}"
+  else
+    processes="$(ps -t "$ttys" -ww -o tty=,pid=,args= 2>/dev/null)"
+    tmux set-option -g @agent_popup_processes "$now"$'\n'"$topology"$'\n'"$processes"
+  fi
   {
-    tmux list-panes -a -F 'T:#{pane_tty}:#{pane_id}:#{session_name}:#{window_index}.#{pane_index}:#{@agent_popup_agent}:#{pane_dead}:#{window_bell_flag}:#{pane_current_path}'
-    ps -A -ww -o tty=,pid=,args=
+    printf '%s\n' "$panes"
+    printf '%s\n' "$processes"
   } | awk -v names="$(configured_agents | tr '\n' ' ')" '
     BEGIN { n = split(names, list, " "); for (i = 1; i <= n; i++) known[list[i]] = 1 }
     substr($0, 1, 2) == "T:" {
@@ -238,7 +235,7 @@ claude_states() {
 # agent_state <screen> <tty> <bell>
 # working, waiting (needs you) or idle. Claude Code's own status wins where
 # there is one. Otherwise what its screen says (<screen>, from
-# screen_state), or waiting if it rang the bell since you last looked.
+# hydrate_records), or waiting if it rang the bell since you last looked.
 agent_state() {
   local tty="${2#/dev/}" status=''
   case "$CLAUDE_STATES" in
@@ -262,21 +259,56 @@ agent_state() {
   esac
 }
 
-# record <order> <recency> <kind> <target> <pid> <agent> <number> <tty> <bell> <note> <directory>
-# One agent's row data, with everything that takes a tmux call looked up:
-# its label, the model of one on a local model (see local_agents), and what
-# its screen says (screen_state). <number> is a session's after the first
-# of its agent in its directory (free_session). Fields are separated by
-# \037, the directory last.
+# record: raw metadata, with the directory last so it can contain colons.
 record() {
-  local screen model=''
-  screen="$(screen_state "$(target_of "$3" "$4")")"
-  case "$6" in
-  *+local) model="$(tmux display-message -p -t "=$4:" '#{@agent_popup_model}' 2>/dev/null)" ;;
-  esac
-  printf '%s\037' "$1" "$2" "$3" "$4" "$5" "$6" "$(agent_option "${6%+local}" label)" "$model" \
-    "$7" "$screen" "$8" "$9" "${10}"
+  printf '%s\037' "${@:1:10}"
   printf '%s\n' "${11}"
+}
+
+# Hydrate raw records in one tmux connection and one awk process. Only the
+# final eight nonblank screen rows determine state. A per-call marker
+# separates captures, including empty screens; model metadata follows it.
+hydrate_records() {
+  local raw="$RECORDS" order recency kind target pid agent number tty bell note dir
+  local cmds=() names=() seen=' ' name marker="agent-popup-$$-$RANDOM-$RANDOM"
+  local screen model label VALUE
+  [ -n "$raw" ] || return 0
+  while IFS=$'\037' read -r order recency kind target pid agent number tty bell note dir; do
+    if [ "$kind" = session ]; then target="=$target:"; fi
+    [ "${#cmds[@]}" -eq 0 ] || cmds+=(\;)
+    cmds+=(capture-pane -pt "$target" \; display-message -p -t "$target")
+    if [ "${RECORD_MODE:-}" != status ] && [[ "$agent" == *+local ]]; then
+      cmds+=("$marker:#{@agent_popup_model}")
+    else
+      cmds+=("$marker:")
+    fi
+    name="@agent_popup_${agent%+local}_label"
+    case "$seen" in *" $name "*) ;; *) names+=("$name"); seen="$seen$name " ;; esac
+  done <<<"$raw"
+  if [ "${RECORD_MODE:-}" != status ]; then load_options "${names[@]}"; fi
+  while IFS=$'\037' read -r order recency kind target pid agent number tty bell note dir; do
+    screen=idle model='' label=''
+    IFS=$'\037' read -r screen model <&3 || :
+    if [ "${RECORD_MODE:-}" != status ]; then
+      option_value "@agent_popup_${agent%+local}_label"
+      agent_default "${agent%+local}" label
+      label="${VALUE:-$DEFAULT}"
+    fi
+    printf '%s\037' "$order" "$recency" "$kind" "$target" "$pid" "$agent" "$label" "$model" \
+      "$number" "${screen:-idle}" "$tty" "$bell" "$note"
+    printf '%s\n' "$dir"
+  done 3< <(tmux "${cmds[@]}" | awk -v marker="$marker:" '
+    index($0, marker) == 1 {
+      state = "idle"
+      for (i = (n > 8 ? n - 7 : 1); i <= n; i++) {
+        if (row[i % 8] ~ /esc (to )?cancel/) { state = "waiting"; break }
+        if (row[i % 8] ~ /esc (to )?interrupt/) state = "working"
+      }
+      printf "%s\037%s\n", state, substr($0, length(marker) + 1)
+      n = 0; delete row; next
+    }
+    NF { row[++n % 8] = tolower($0) }
+  ') <<<"$raw"
 }
 
 # gather_rows: a record per agent: the plugin's sessions, then agents in
@@ -302,6 +334,7 @@ load_records() {
   local agent rest cached now asked needs_claude=''
   CLAUDE_STATES=''
   RECORDS="$(gather_rows)"
+  RECORDS="$(hydrate_records)"
   [ "${1:-}" != quick ] && [ -n "$RECORDS" ] || return 0
   while IFS=$'\037' read -r _ _ _ _ _ agent rest; do
     case "$agent" in claude | claude+local) needs_claude=1; break ;; esac
@@ -371,7 +404,7 @@ target_of() {
 # are in the status line's default colour. Each style is its own #[...],
 # since themes put segments inside #{?...}, where a comma ends the branch.
 status_line() {
-  local waiting=0 working=0 idle=0 line='' screen tty bell
+  local waiting=0 working=0 idle=0 line='' screen tty bell RECORD_MODE=status
   load_records
   [ -n "$RECORDS" ] || return 0
   while IFS=$'\037' read -r _ _ _ _ _ _ _ _ _ screen tty bell _; do
@@ -398,7 +431,7 @@ case "${1:-}" in
   ;;
 --any)
   # Whether any agent runs at all, without the statuses: for choose-session.
-  [ -n "$(agent_sessions)" ] || [ -n "$(loose_agents)" ]
+  [ -n "$(agent_sessions)" ] || [ -n "$(loose_agents fresh)" ]
   exit
   ;;
 --esc)
@@ -418,6 +451,7 @@ case "${1:-}" in
   exit 0
   ;;
 --kill)
+  tmux set-option -gu @agent_popup_processes
   # A session goes entirely, agent included. tmux hangs up on the session's
   # programs, but one that ignores that (an agent in the middle of a turn,
   # say) carries on with no window; so each pane's process group also gets
