@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Running agent popups keep the cursor hidden during redraw frames, avoiding
+  flashes at intermediate drawing positions. This uses Python 3 when
+  available; without it, the existing direct client is used. The agent's
+  input cursor is restored when the frame finishes, and agents that hide
+  their cursor keep it hidden.
+
 - The picker (`prefix u`) rests while your terminal is in the background:
   with tmux's `focus-events on`, its preview and list stop updating until
   you come back, and after 30 minutes of that it closes

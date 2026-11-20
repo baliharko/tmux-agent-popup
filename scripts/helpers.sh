@@ -116,13 +116,18 @@ local_agents() {
 
 # is_popup_client <client>
 # True when <client> is the nested client inside one of our popups. tmux
-# starts a popup's command itself, and attach-agent execs the client there, so
-# its parent process is the tmux server.
+# starts a popup's command itself. With the cursor relay, the client is one
+# process further down; its marker must match both live process IDs.
 is_popup_client() {
-  local pids
-  pids="$(tmux list-clients -F '#{client_name} #{client_pid} #{pid}' |
-    awk -v c="$1" '$1 == c { print $2, $3 }')"
-  [ -n "$pids" ] && [ "$(ps -o ppid= -p "${pids% *}" | tr -d ' ')" = "${pids#* }" ]
+  local pids pid server relay parent
+  pids="$(tmux list-clients -F "#{client_name} #{client_pid} #{pid} #{@agent_popup_relay_$1}" |
+    awk -v c="$1" '$1 == c { print $2, $3, $4 }')"
+  [ -n "$pids" ] || return 1
+  read -r pid server relay <<<"$pids"
+  parent="$(ps -o ppid= -p "$pid" | tr -d ' ')"
+  [ "$parent" != "$server" ] || return 0
+  [ "$relay" = "$pid:$parent" ] &&
+    [ "$(ps -o ppid= -p "$parent" | tr -d ' ')" = "$server" ]
 }
 
 # popup_host <client> <pane>
@@ -514,9 +519,14 @@ show_menu() {
 # through the environment, so the install path needs no quoting for whatever
 # shell runs it.
 show_agent_popup() {
+  local attach="$(dirname "${BASH_SOURCE[0]}")/attach-agent" command
+  command='exec "$AGENT_POPUP_ATTACH"'
+  if command -v python3 >/dev/null 2>&1; then
+    command='exec python3 "${AGENT_POPUP_ATTACH%/*}/popup-client.py" "$AGENT_POPUP_ATTACH"'
+  fi
   # shellcheck disable=SC2016 # expanded by the popup's shell
-  show_popup "$1" "$3" -e "AGENT_POPUP_ATTACH=$(dirname "${BASH_SOURCE[0]}")/attach-agent" \
-    -e "AGENT_POPUP_SESSION=$2" -e "AGENT_POPUP_HOST=$1" -E 'exec "$AGENT_POPUP_ATTACH"'
+  show_popup "$1" "$3" -e "AGENT_POPUP_ATTACH=$attach" \
+    -e "AGENT_POPUP_SESSION=$2" -e "AGENT_POPUP_HOST=$1" -E "$command"
 }
 
 # session_name <agent> <dir>

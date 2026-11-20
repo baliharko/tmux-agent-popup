@@ -15,6 +15,8 @@ Inspired by [craftzdog/tmux-claude-hatch](https://github.com/craftzdog/tmux-clau
 
 - tmux 3.4 or newer
 - bash (the macOS system bash 3.2 is fine)
+- Python 3, optional, to prevent cursor flashes during agent redraws.
+  Without it, popups use the direct tmux client as before.
 - A Powerline or Nerd Font for the chevrons in the titles
 - [fzf](https://github.com/junegunn/fzf), for the session picker only (0.46 or
   newer for its j/k navigation)
@@ -327,6 +329,14 @@ The same `_cmd` and `_label` options override the built-in agents.
 
 ## Troubleshooting
 
+### Cursor flashes while an agent is drawing
+
+With Python 3 available, the plugin keeps the cursor hidden while the
+popup's tmux client paints a synchronized frame, then restores the cursor
+state requested by the agent. This works around tmux ignoring synchronized
+output boundaries inside popups, including in tmux 3.8. Close and reopen
+an existing popup after updating to use the fix; the agent keeps running.
+
 ### Bright popup backgrounds after a terminal or tmux update
 
 tmux 3.8 introduced theme-based popup and menu colours. If it detects a
@@ -359,6 +369,7 @@ agents. They need pyte, and fzf for the picker tests (skipped without it):
 ```sh
 python3 -m pip install pyte
 tests/run
+python3 tests/cursor.py
 ```
 
 ## License
